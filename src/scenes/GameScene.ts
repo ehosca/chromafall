@@ -145,23 +145,45 @@ export class GameScene extends Phaser.Scene {
     this.primedBorder = undefined;
 
     const game = this.controller.current;
-    // Stagger entry — tiles fall in from above
-    const dropFrom = -this.scale.height;
-    let i = 0;
+
+    // Rain-drop entry. Each tile falls individually from just above the top
+    // of the board to its slot — no Bounce.Out "thunk", no synchronized wall.
+    //
+    // Per-tile timing:
+    //   colDelay   — each column starts up to PER_COL_JITTER ms later than
+    //                its neighbor so the grid doesn't appear all-at-once.
+    //   rowStagger — within a column, row 0 (bottom) falls first, row 1 next,
+    //                etc. Subsequent rows land on top of the already-settled
+    //                tiles, which reads as the column "filling up" from below.
+    //   duration   — grows with fall distance on a sqrt curve (gravity-ish —
+    //                a raindrop falling farther takes longer, but not linearly).
+    //
+    // Ease 'Quad.In' accelerates the fall so the motion has weight, then stops
+    // cleanly at the slot (no bounce, no overshoot — that's what makes it read
+    // as rain rather than rubber).
+    const DROP_START_Y = -this.tileSize / 2;
+    const PER_COL_JITTER = 180;
+    const PER_ROW_STAGGER = 35;
+    const DURATION_BASE = 180;
+    const DURATION_SCALE = 10;
+
     for (const col of game.columns) {
-      for (const brick of col.bricks) {
+      const colDelay = Math.random() * PER_COL_JITTER;
+      col.bricks.forEach((brick, r) => {
         const sprite = this.createBrickSprite(brick);
         const targetY = sprite.y;
-        sprite.y = dropFrom;
+        sprite.y = DROP_START_Y;
+        const fallDist = targetY - DROP_START_Y;
+        const duration =
+          DURATION_BASE + Math.round(Math.sqrt(fallDist) * DURATION_SCALE);
         this.tweens.add({
           targets: sprite,
           y: targetY,
-          duration: 450 + Math.random() * 200,
-          delay: (brick.column * 6) + (brick.row * 2) + (i % 7) * 4,
-          ease: 'Bounce.Out'
+          duration,
+          delay: colDelay + r * PER_ROW_STAGGER,
+          ease: 'Quad.In'
         });
-        i++;
-      }
+      });
     }
     this.scoreText.setText(`Score: ${this.controller.totalScore}`);
   }
