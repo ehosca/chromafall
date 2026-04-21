@@ -13,11 +13,14 @@ const PADDING = 16;
 
 const FALL_DURATION = 280;
 const SHATTER_DURATION = 260;
-// Breathing pulse for primed group (replaces static hover scale).
-// Slow-enough yoyo to read as "alive / selected" without being distracting.
-const PULSE_MIN = 1.0;
-const PULSE_MAX = 1.12;
-const PULSE_DURATION = 520;
+// Breathing pulse for the primed group's outer perimeter border (replaces the
+// per-tile scale pulse, which made the whole selection "jiggle" and fought
+// with the shatter tween). Slow-enough yoyo to read as "alive / selected"
+// without being distracting.
+const BORDER_PULSE_DURATION = 520;
+const BORDER_PULSE_MIN_ALPHA = 0.35;
+const BORDER_LINE_WIDTH = 3;
+const BORDER_COLOR = 0xffffff;
 
 export class GameScene extends Phaser.Scene {
   private controller!: GameController;
@@ -29,10 +32,16 @@ export class GameScene extends Phaser.Scene {
   private tileSize = 32;
   private boardOriginX = 0;
   private boardOriginY = 0;
-  // Desktop: the "primed" group is what the cursor is hovering.
-  // Touch: it's the group the player tapped once — a second tap inside it commits.
+  // The "primed" group is the tiles a first tap selected; a second tap inside
+  // the group commits. Each primed tile swaps fill from BRICK_FILL (muted)
+  // to BRICK_GLOW (bright) — that's the stateful "selected" signal. The
+  // outer-perimeter Graphics below adds an animated border on top.
   private primedGroupIds: Set<number> = new Set();
-  private pulseTweens: Map<number, Phaser.Tweens.Tween> = new Map();
+  // Single Graphics object tracing the outer edges of the primed group.
+  // Alpha-pulses while primed. Lives inside boardContainer so its coords match
+  // the tile sprites.
+  private primedBorder?: Phaser.GameObjects.Graphics;
+  private borderPulseTween?: Phaser.Tweens.Tween;
   private busy = false;
 
   constructor() {
@@ -110,6 +119,9 @@ export class GameScene extends Phaser.Scene {
         s.setSize(this.tileSize - 2, this.tileSize - 2);
       }
     }
+    // Tile positions/sizes just moved — redraw the primed perimeter so it
+    // still hugs the selection.
+    if (this.primedGroupIds.size > 0) this.redrawPrimedBorder();
   }
 
   private tileX(col: number): number {
@@ -120,11 +132,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBoard() {
-    // Clear any prior sprites
+    // Clear any prior sprites. `removeAll(true)` destroys the container's
+    // children, including the primedBorder Graphics if it was in the list —
+    // so we explicitly null our reference and stop the tween after.
     this.boardContainer.removeAll(true);
     this.brickSprites.clear();
     this.primedGroupIds.clear();
-    this.pulseTweens.clear();
+    if (this.borderPulseTween) {
+      this.borderPulseTween.stop();
+      this.borderPulseTween = undefined;
+    }
+    this.primedBorder = undefined;
 
     const game = this.controller.current;
     // Stagger entry — tiles fall in from above
@@ -206,8 +224,9 @@ export class GameScene extends Phaser.Scene {
     this.primeForBrick(brick);
   }
 
-  // Prime a group for commit — pulse it, stop pulsing anything no longer in the group.
-  // No-op if this exact set is already primed (prevents tween thrash during hover drift).
+  // Prime a group for commit — swap tile fills to the bright glow tier and
+  // trace an animated border around the group's outer perimeter.
+  // No-op if this exact set is already primed (prevents tween thrash).
   private primeForBrick(brick: Brick) {
     const group = this.controller.current.getAdjacentBricks(brick);
     if (group.length < 2) {
@@ -217,66 +236,130 @@ export class GameScene extends Phaser.Scene {
     const newIds = new Set(group.map(b => b.id));
     if (this.setEquals(newIds, this.primedGroupIds)) return;
 
-    // Stop pulse on tiles that fell out of the group
+    // Restore fill on tiles that fell out of the group
     for (const id of this.primedGroupIds) {
       if (newIds.has(id)) continue;
-      this.stopPulse(id);
+      this.setPrimedFill(id, false);
     }
-    // Start pulse on newly-primed tiles
+    // Brighten fill on newly-primed tiles
     for (const id of newIds) {
       if (this.primedGroupIds.has(id)) continue;
-      this.startPulse(id);
+      this.setPrimedFill(id, true);
     }
     this.primedGroupIds = newIds;
+
+    // Redraw the perimeter border for the new set and make sure the pulse is
+    // running. We only (re)draw when the set actually changes, so the tween
+    // ticks uninterrupted across successive hovers on the same group.
+    this.redrawPrimedBorder();
+    this.startBorderPulse();
   }
 
   private unprime() {
     for (const id of this.primedGroupIds) {
-      this.stopPulse(id);
+      this.setPrimedFill(id, false);
     }
     this.primedGroupIds.clear();
+    this.stopBorderPulse();
   }
 
-  private startPulse(id: number) {
+  // Swap one tile's fill between the muted base color and the bright glow
+  // color. We stashed both tiers on the sprite in createBrickSprite so this
+  // doesn't need to look up the brick (whose references go stale after a
+  // commit re-indexes the board).
+  private setPrimedFill(id: number, primed: boolean) {
     const s = this.brickSprites.get(id);
     if (!s) return;
-    // Kill any prior pulse on this sprite before starting a new one
-    const existing = this.pulseTweens.get(id);
-    if (existing) {
-      existing.stop();
-      this.pulseTweens.delete(id);
+    const fill = primed ? s.getData('glowFill') : s.getData('baseFill');
+    s.setFillStyle(fill, 1);
+  }
+
+  // Draw a single polyline tracing the outer edges of every primed tile.
+  // Interior edges between two primed tiles are skipped — so the result
+  // reads as one continuous shape around the whole group.
+  //
+  // Coordinates are in boardContainer space (same as the tile sprites).
+  // Row→y mapping: tileY(row) = (ROWS-1-row) * tileSize + tileSize/2, so
+  // row+1 is visually ABOVE (smaller y) and row-1 is visually BELOW.
+  private redrawPrimedBorder() {
+    // Ensure the graphics object exists and is in the container.
+    if (!this.primedBorder) {
+      this.primedBorder = this.add.graphics();
+      this.boardContainer.add(this.primedBorder);
     }
-    // Swap to bright fill for the "selected" state — this is the primary
-    // visual signal; the scale pulse is layered on top for motion.
-    s.setFillStyle(s.getData('glowFill'), 1);
-    s.setScale(PULSE_MIN);
-    const t = this.tweens.add({
-      targets: s,
-      scale: PULSE_MAX,
-      duration: PULSE_DURATION,
+    const g = this.primedBorder;
+    g.clear();
+
+    if (this.primedGroupIds.size === 0) return;
+
+    // Collect fresh Brick objects for the primed ids (closures could have
+    // stale row/column after gravity collapses).
+    const primed: Brick[] = [];
+    for (const id of this.primedGroupIds) {
+      const b = this.findBrick(id);
+      if (b) primed.push(b);
+    }
+    if (primed.length === 0) return;
+
+    // (col,row) → in-group lookup for adjacency checks.
+    const key = (c: number, r: number) => `${c},${r}`;
+    const inGroup = new Set(primed.map(b => key(b.column, b.row)));
+
+    g.lineStyle(BORDER_LINE_WIDTH, BORDER_COLOR, 1);
+
+    const s = this.tileSize;
+    // Tiles render with size (tileSize - 2) but we want the border to sit on
+    // the theoretical cell edge so adjacent tiles' perimeter segments line up
+    // cleanly. Use tileSize / 2 as the half-extent.
+    const half = s / 2;
+
+    for (const b of primed) {
+      const cx = this.tileX(b.column);
+      const cy = this.tileY(b.row);
+      const left = cx - half;
+      const right = cx + half;
+      const top = cy - half;     // visually upper edge
+      const bottom = cy + half;  // visually lower edge
+
+      // For each direction, draw the shared edge ONLY when the neighbor in
+      // that direction is NOT part of the primed group.
+      if (!inGroup.has(key(b.column, b.row + 1))) {
+        g.lineBetween(left, top, right, top);
+      }
+      if (!inGroup.has(key(b.column, b.row - 1))) {
+        g.lineBetween(left, bottom, right, bottom);
+      }
+      if (!inGroup.has(key(b.column - 1, b.row))) {
+        g.lineBetween(left, top, left, bottom);
+      }
+      if (!inGroup.has(key(b.column + 1, b.row))) {
+        g.lineBetween(right, top, right, bottom);
+      }
+    }
+  }
+
+  private startBorderPulse() {
+    if (!this.primedBorder) return;
+    if (this.borderPulseTween) return; // already running
+    this.primedBorder.setAlpha(1);
+    this.borderPulseTween = this.tweens.add({
+      targets: this.primedBorder,
+      alpha: BORDER_PULSE_MIN_ALPHA,
+      duration: BORDER_PULSE_DURATION,
       ease: 'Sine.InOut',
       yoyo: true,
       repeat: -1
     });
-    this.pulseTweens.set(id, t);
   }
 
-  private stopPulse(id: number) {
-    const t = this.pulseTweens.get(id);
-    if (t) {
-      t.stop();
-      this.pulseTweens.delete(id);
+  private stopBorderPulse() {
+    if (this.borderPulseTween) {
+      this.borderPulseTween.stop();
+      this.borderPulseTween = undefined;
     }
-    const s = this.brickSprites.get(id);
-    if (s) {
-      // Restore muted base fill and ease back to rest scale.
-      s.setFillStyle(s.getData('baseFill'), 1);
-      this.tweens.add({
-        targets: s,
-        scale: PULSE_MIN,
-        duration: 120,
-        ease: 'Sine.Out'
-      });
+    if (this.primedBorder) {
+      this.primedBorder.clear();
+      this.primedBorder.setAlpha(1);
     }
   }
 
