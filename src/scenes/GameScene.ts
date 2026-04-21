@@ -27,14 +27,12 @@ export class GameScene extends Phaser.Scene {
   private boardOriginY = 0;
   private hoveredGroup: Set<number> = new Set();
   private busy = false;
-  private hasWebGL = false;
 
   constructor() {
     super('GameScene');
   }
 
   create() {
-    this.hasWebGL = this.sys.renderer.type === Phaser.WEBGL;
     this.controller = new GameController(ROWS, COLS);
     this.boardContainer = this.add.container(0, 0);
     this.createHud();
@@ -147,17 +145,10 @@ export class GameScene extends Phaser.Scene {
     const y = this.tileY(brick.row);
     const size = this.tileSize - 2;
     const rect = this.add.rectangle(x, y, size, size, BRICK_FILL[brick.color]);
-    rect.setStrokeStyle(1, BRICK_GLOW[brick.color], 0.7);
+    // Bright stroke gives a neon-border look without the cost of a per-sprite shader.
+    // (A per-tile postFX.addGlow across 225 sprites tanks frame rate — don't do it.)
+    rect.setStrokeStyle(2, BRICK_GLOW[brick.color], 1);
     rect.setInteractive({ useHandCursor: true });
-
-    // Neon glow on WebGL only
-    if (this.hasWebGL && rect.postFX) {
-      try {
-        rect.postFX.addGlow(BRICK_GLOW[brick.color], 2, 0, false, 0.1, 6);
-      } catch {
-        // ignore if FX pipeline unavailable
-      }
-    }
 
     rect.on('pointerover', () => {
       if (this.busy) return;
