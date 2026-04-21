@@ -40,6 +40,15 @@ export function shakeScreen(camera: Phaser.Cameras.Scene2D.Camera, comboSize: nu
 
 /**
  * Floating "+points" / "CHAIN xN!" text rising and fading at world position.
+ *
+ * Split into three phases so the message is actually readable:
+ *   pop-in (0-200ms)   — alpha 0→1, scale 0.6→target, with a Back.Out bounce
+ *   hold   (200-1100ms) — fully opaque, gently rising
+ *   fade   (1100-1600ms) — alpha 1→0 while continuing to rise
+ *
+ * The earlier version ran alpha + y + scale in a single 900ms tween, so the
+ * text was already half-transparent and drifting by the time the eye caught
+ * it. ~900ms of hold at full opacity is what makes the number legible.
  */
 export function showComboText(
   scene: Phaser.Scene,
@@ -57,6 +66,8 @@ export function showComboText(
       : `+${points}`;
   const color = huge ? '#ffd93b' : big ? '#ff4d9e' : '#e8e8ff';
   const fontSize = `${Math.min(22 + comboSize * 2, 56)}px`;
+  const targetScale = big ? 1.15 : 1.0;
+  const rise = 80;
 
   const text = scene.add.text(x, y, msg, {
     fontSize,
@@ -64,16 +75,52 @@ export function showComboText(
     fontFamily: 'monospace',
     fontStyle: 'bold',
     stroke: '#0a0a14',
-    strokeThickness: 3
-  }).setOrigin(0.5).setDepth(1000);
+    strokeThickness: 4
+  }).setOrigin(0.5).setDepth(1000).setAlpha(0).setScale(0.6);
 
+  // Clamp position so the full message stays on-screen even when the group's
+  // centroid is near an edge (a MEGA CHAIN message is ~350px wide at 42px
+  // font — without clamping it bleeds off the side on small viewports).
+  // Measure AFTER creation so we use the real rendered width for the font.
+  // The target scale matters for measurement — bump the half-size by
+  // targetScale to reserve room for the post-pop-in size.
+  const pad = 12;
+  const halfW = (text.width * targetScale) / 2;
+  const halfH = (text.height * targetScale) / 2;
+  const w = scene.scale.width;
+  const h = scene.scale.height;
+  // The rise tween moves the text up by `rise` px; the top of the text at
+  // its final position must still clear the top edge.
+  const minY = rise + halfH + pad;
+  const maxY = h - halfH - pad;
+  const clampedX = Phaser.Math.Clamp(x, halfW + pad, w - halfW - pad);
+  const clampedY = Phaser.Math.Clamp(y, minY, Math.max(minY, maxY));
+  text.setPosition(clampedX, clampedY);
+
+  // Phase 1: pop in (fast, overlaps with the start of the rise)
   scene.tweens.add({
     targets: text,
-    y: y - 70,
+    alpha: 1,
+    scale: targetScale,
+    duration: 200,
+    ease: 'Back.Out'
+  });
+
+  // Phase 2: slow rise across the full lifetime so motion reads as "floating up"
+  scene.tweens.add({
+    targets: text,
+    y: clampedY - rise,
+    duration: 1600,
+    ease: 'Cubic.Out'
+  });
+
+  // Phase 3: fade out after a long hold, then destroy
+  scene.tweens.add({
+    targets: text,
     alpha: 0,
-    scale: big ? 1.3 : 1.1,
-    duration: 900,
-    ease: 'Cubic.Out',
+    delay: 1100,
+    duration: 450,
+    ease: 'Cubic.In',
     onComplete: () => text.destroy()
   });
 }
