@@ -1,0 +1,23 @@
+{
+  "name": "chromafall",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A neon cascade puzzle — tap color clusters, watch them fall.",
+  "author": "Erhan Hosca <erhan@hosca.com>",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vite-plugin-pwa": "^0.20.0"
+  }
+}
