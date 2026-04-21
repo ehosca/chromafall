@@ -59,10 +59,14 @@ export function showComboText(
 ) {
   const big = comboSize >= 5;
   const huge = comboSize >= 8;
+  // For CHAIN / MEGA CHAIN, break onto two lines so the points number gets
+  // its own visual beat — a single line of "CHAIN x8!  +256" crammed the
+  // score against the label and buried the payoff. Plain small combos stay
+  // single-line (just "+N").
   const msg = huge
-    ? `MEGA CHAIN x${comboSize}!  +${points}`
+    ? `MEGA CHAIN x${comboSize}!\n+${points}`
     : big
-      ? `CHAIN x${comboSize}!  +${points}`
+      ? `CHAIN x${comboSize}!\n+${points}`
       : `+${points}`;
   const color = huge ? '#ffd93b' : big ? '#ff4d9e' : '#e8e8ff';
   const fontSize = `${Math.min(22 + comboSize * 2, 56)}px`;
@@ -75,7 +79,10 @@ export function showComboText(
     fontFamily: 'monospace',
     fontStyle: 'bold',
     stroke: '#0a0a14',
-    strokeThickness: 4
+    strokeThickness: 4,
+    // Center-align so the shorter "+N" line sits directly under the CHAIN
+    // label instead of left-hugging it.
+    align: 'center'
   }).setOrigin(0.5).setDepth(1000).setAlpha(0).setScale(0.6);
 
   // Clamp position so the full message stays on-screen even when the group's
