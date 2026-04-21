@@ -11,11 +11,17 @@ export const PALETTE = {
   panel: 0x1a1a2e
 } as const;
 
+// Two-tier color scheme:
+//   BRICK_FILL  — muted base color for unprimed tiles (~40% lightness, 55% sat).
+//   BRICK_GLOW  — bright neon version, used as the stroke AND as the fill when
+//                 the tile is primed for commit. The fill-swap between the two
+//                 tiers is the main "this tile is selected" visual signal; the
+//                 breathing scale pulse is layered on top.
 export const BRICK_FILL: Record<BrickColor, number> = {
-  [BrickColor.Red]: 0xff3b6b,
-  [BrickColor.Blue]: 0x3ba8ff,
-  [BrickColor.Green]: 0x3bff95,
-  [BrickColor.Yellow]: 0xffd93b
+  [BrickColor.Red]: 0x9a2d52,
+  [BrickColor.Blue]: 0x2d6ea3,
+  [BrickColor.Green]: 0x2d9a6a,
+  [BrickColor.Yellow]: 0xa38c2d
 };
 
 export const BRICK_GLOW: Record<BrickColor, number> = {

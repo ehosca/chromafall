@@ -157,30 +157,53 @@ export class GameScene extends Phaser.Scene {
     // (A per-tile postFX.addGlow across 225 sprites tanks frame rate — don't do it.)
     rect.setStrokeStyle(2, BRICK_GLOW[brick.color], 1);
     rect.setInteractive({ useHandCursor: true });
+    // Stash fill tiers on the sprite so prime/unprime can swap colors without
+    // needing the brick reference (which can go stale after a commit re-indexes).
+    rect.setData('baseFill', BRICK_FILL[brick.color]);
+    rect.setData('glowFill', BRICK_GLOW[brick.color]);
 
-    // Desktop: hover primes, click commits.
-    // Touch: first tap primes, second tap inside the primed group commits.
-    // pointer.wasTouch reliably distinguishes touch from mouse/pen input.
-    rect.on('pointerover', (pointer: Phaser.Input.Pointer) => {
-      if (this.busy || pointer.wasTouch) return;
-      this.primeForBrick(brick);
-    });
-    rect.on('pointerout', (pointer: Phaser.Input.Pointer) => {
-      if (this.busy || pointer.wasTouch) return;
-      this.unprime();
-    });
-    rect.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    // Single input model for desktop AND touch: first click/tap primes the
+    // group, second click/tap on any primed tile commits. No hover-priming —
+    // too easy to misclick, and without hover the selection stays stable
+    // (matches SameGame / Collapse! conventions).
+    rect.on('pointerdown', () => {
       if (this.busy) return;
-      if (pointer.wasTouch) {
-        this.handleTouchTap(brick);
-      } else {
-        this.commitMove(brick);
-      }
+      this.handleTap(brick.id);
     });
 
     this.boardContainer.add(rect);
     this.brickSprites.set(brick.id, rect);
     return rect;
+  }
+
+  // Look up the current Brick object for a given id. Necessary because
+  // GameController.removeBrick() swaps in a cloned Game on every move, so the
+  // brick references captured in sprite closures go stale — their row/column
+  // fields no longer reflect where the tile lives after gravity collapses.
+  // Always route taps through this to get the fresh brick.
+  private findBrick(id: number): Brick | undefined {
+    for (const col of this.controller.current.columns) {
+      for (const b of col.bricks) if (b.id === id) return b;
+    }
+    return undefined;
+  }
+
+  private handleTap(id: number) {
+    const brick = this.findBrick(id);
+    if (!brick) return; // sprite exists but brick was removed — shouldn't happen in practice
+    // Second tap inside the primed group → commit.
+    if (this.primedGroupIds.has(id)) {
+      this.commitMove(brick);
+      return;
+    }
+    // First tap (or tap on a different group) → prime that group.
+    const group = this.controller.current.getAdjacentBricks(brick);
+    if (group.length < 2) {
+      sfx.click();
+      this.unprime();
+      return;
+    }
+    this.primeForBrick(brick);
   }
 
   // Prime a group for commit — pulse it, stop pulsing anything no longer in the group.
@@ -223,6 +246,9 @@ export class GameScene extends Phaser.Scene {
       existing.stop();
       this.pulseTweens.delete(id);
     }
+    // Swap to bright fill for the "selected" state — this is the primary
+    // visual signal; the scale pulse is layered on top for motion.
+    s.setFillStyle(s.getData('glowFill'), 1);
     s.setScale(PULSE_MIN);
     const t = this.tweens.add({
       targets: s,
@@ -243,7 +269,8 @@ export class GameScene extends Phaser.Scene {
     }
     const s = this.brickSprites.get(id);
     if (s) {
-      // Ease back to rest scale so the transition doesn't snap.
+      // Restore muted base fill and ease back to rest scale.
+      s.setFillStyle(s.getData('baseFill'), 1);
       this.tweens.add({
         targets: s,
         scale: PULSE_MIN,
@@ -257,22 +284,6 @@ export class GameScene extends Phaser.Scene {
     if (a.size !== b.size) return false;
     for (const x of a) if (!b.has(x)) return false;
     return true;
-  }
-
-  private handleTouchTap(brick: Brick) {
-    // Second tap on a primed tile commits the move.
-    if (this.primedGroupIds.has(brick.id)) {
-      this.commitMove(brick);
-      return;
-    }
-    // Tap outside the primed group (or first tap) → prime this brick's group.
-    const group = this.controller.current.getAdjacentBricks(brick);
-    if (group.length < 2) {
-      sfx.click();
-      this.unprime();
-      return;
-    }
-    this.primeForBrick(brick);
   }
 
   private commitMove(brick: Brick) {
