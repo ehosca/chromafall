@@ -18,15 +18,34 @@
         overflow: hidden;
         background: #0a0a14;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", monospace;
+        /* Disable iOS pinch-zoom and rubber-band scroll over the game */
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-user-select: none;
+        user-select: none;
       }
       body {
+        /* 100dvh tracks the dynamic viewport (accounts for iOS URL bar
+           collapsing). 100vh is the fallback for older browsers. */
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        /* Safe-area padding keeps the board out from under the iOS notch /
+           home indicator and the Android nav bar. Phaser's scale manager
+           sizes the canvas to #game, which is inside this padding. */
+        padding-top: env(safe-area-inset-top);
+        padding-right: env(safe-area-inset-right);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+        box-sizing: border-box;
         display: flex;
         align-items: center;
         justify-content: center;
       }
       #game {
-        width: 100vw;
-        height: 100vh;
+        width: 100%;
+        height: 100%;
       }
     </style>
   </head>

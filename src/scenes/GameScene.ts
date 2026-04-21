@@ -13,7 +13,11 @@ const PADDING = 16;
 
 const FALL_DURATION = 280;
 const SHATTER_DURATION = 260;
-const HOVER_SCALE = 1.09;
+// Breathing pulse for primed group (replaces static hover scale).
+// Slow-enough yoyo to read as "alive / selected" without being distracting.
+const PULSE_MIN = 1.0;
+const PULSE_MAX = 1.12;
+const PULSE_DURATION = 520;
 
 export class GameScene extends Phaser.Scene {
   private controller!: GameController;
@@ -25,7 +29,10 @@ export class GameScene extends Phaser.Scene {
   private tileSize = 32;
   private boardOriginX = 0;
   private boardOriginY = 0;
-  private hoveredGroup: Set<number> = new Set();
+  // Desktop: the "primed" group is what the cursor is hovering.
+  // Touch: it's the group the player tapped once — a second tap inside it commits.
+  private primedGroupIds: Set<number> = new Set();
+  private pulseTweens: Map<number, Phaser.Tweens.Tween> = new Map();
   private busy = false;
 
   constructor() {
@@ -116,7 +123,8 @@ export class GameScene extends Phaser.Scene {
     // Clear any prior sprites
     this.boardContainer.removeAll(true);
     this.brickSprites.clear();
-    this.hoveredGroup.clear();
+    this.primedGroupIds.clear();
+    this.pulseTweens.clear();
 
     const game = this.controller.current;
     // Stagger entry — tiles fall in from above
@@ -150,17 +158,24 @@ export class GameScene extends Phaser.Scene {
     rect.setStrokeStyle(2, BRICK_GLOW[brick.color], 1);
     rect.setInteractive({ useHandCursor: true });
 
-    rect.on('pointerover', () => {
-      if (this.busy) return;
-      this.onBrickHover(brick);
+    // Desktop: hover primes, click commits.
+    // Touch: first tap primes, second tap inside the primed group commits.
+    // pointer.wasTouch reliably distinguishes touch from mouse/pen input.
+    rect.on('pointerover', (pointer: Phaser.Input.Pointer) => {
+      if (this.busy || pointer.wasTouch) return;
+      this.primeForBrick(brick);
     });
-    rect.on('pointerout', () => {
-      if (this.busy) return;
-      this.onBrickUnhover();
+    rect.on('pointerout', (pointer: Phaser.Input.Pointer) => {
+      if (this.busy || pointer.wasTouch) return;
+      this.unprime();
     });
-    rect.on('pointerdown', () => {
+    rect.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (this.busy) return;
-      this.onBrickClick(brick);
+      if (pointer.wasTouch) {
+        this.handleTouchTap(brick);
+      } else {
+        this.commitMove(brick);
+      }
     });
 
     this.boardContainer.add(rect);
@@ -168,38 +183,99 @@ export class GameScene extends Phaser.Scene {
     return rect;
   }
 
-  private onBrickHover(brick: Brick) {
+  // Prime a group for commit — pulse it, stop pulsing anything no longer in the group.
+  // No-op if this exact set is already primed (prevents tween thrash during hover drift).
+  private primeForBrick(brick: Brick) {
     const group = this.controller.current.getAdjacentBricks(brick);
     if (group.length < 2) {
-      this.onBrickUnhover();
+      this.unprime();
       return;
     }
     const newIds = new Set(group.map(b => b.id));
+    if (this.setEquals(newIds, this.primedGroupIds)) return;
 
-    // Unscale stale
-    for (const id of this.hoveredGroup) {
+    // Stop pulse on tiles that fell out of the group
+    for (const id of this.primedGroupIds) {
       if (newIds.has(id)) continue;
-      const s = this.brickSprites.get(id);
-      if (s) this.tweens.add({ targets: s, scale: 1, duration: 120 });
+      this.stopPulse(id);
     }
-    // Scale up new
+    // Start pulse on newly-primed tiles
     for (const id of newIds) {
-      if (this.hoveredGroup.has(id)) continue;
-      const s = this.brickSprites.get(id);
-      if (s) this.tweens.add({ targets: s, scale: HOVER_SCALE, duration: 120 });
+      if (this.primedGroupIds.has(id)) continue;
+      this.startPulse(id);
     }
-    this.hoveredGroup = newIds;
+    this.primedGroupIds = newIds;
   }
 
-  private onBrickUnhover() {
-    for (const id of this.hoveredGroup) {
-      const s = this.brickSprites.get(id);
-      if (s) this.tweens.add({ targets: s, scale: 1, duration: 120 });
+  private unprime() {
+    for (const id of this.primedGroupIds) {
+      this.stopPulse(id);
     }
-    this.hoveredGroup.clear();
+    this.primedGroupIds.clear();
   }
 
-  private onBrickClick(brick: Brick) {
+  private startPulse(id: number) {
+    const s = this.brickSprites.get(id);
+    if (!s) return;
+    // Kill any prior pulse on this sprite before starting a new one
+    const existing = this.pulseTweens.get(id);
+    if (existing) {
+      existing.stop();
+      this.pulseTweens.delete(id);
+    }
+    s.setScale(PULSE_MIN);
+    const t = this.tweens.add({
+      targets: s,
+      scale: PULSE_MAX,
+      duration: PULSE_DURATION,
+      ease: 'Sine.InOut',
+      yoyo: true,
+      repeat: -1
+    });
+    this.pulseTweens.set(id, t);
+  }
+
+  private stopPulse(id: number) {
+    const t = this.pulseTweens.get(id);
+    if (t) {
+      t.stop();
+      this.pulseTweens.delete(id);
+    }
+    const s = this.brickSprites.get(id);
+    if (s) {
+      // Ease back to rest scale so the transition doesn't snap.
+      this.tweens.add({
+        targets: s,
+        scale: PULSE_MIN,
+        duration: 120,
+        ease: 'Sine.Out'
+      });
+    }
+  }
+
+  private setEquals<T>(a: Set<T>, b: Set<T>): boolean {
+    if (a.size !== b.size) return false;
+    for (const x of a) if (!b.has(x)) return false;
+    return true;
+  }
+
+  private handleTouchTap(brick: Brick) {
+    // Second tap on a primed tile commits the move.
+    if (this.primedGroupIds.has(brick.id)) {
+      this.commitMove(brick);
+      return;
+    }
+    // Tap outside the primed group (or first tap) → prime this brick's group.
+    const group = this.controller.current.getAdjacentBricks(brick);
+    if (group.length < 2) {
+      sfx.click();
+      this.unprime();
+      return;
+    }
+    this.primeForBrick(brick);
+  }
+
+  private commitMove(brick: Brick) {
     const group = this.controller.current.getAdjacentBricks(brick);
     if (group.length < 2) {
       sfx.click();
@@ -212,8 +288,9 @@ export class GameScene extends Phaser.Scene {
     const points = groupSize * groupSize;
     const centroid = this.groupCentroid(group);
 
-    // Clear hover highlight BEFORE the state mutates
-    this.hoveredGroup.clear();
+    // Stop all pulses BEFORE we mutate state and start the shatter tween —
+    // we don't want the pulse fighting the shatter scale.
+    this.unprime();
 
     // Commit the move
     this.controller.removeBrick(brick);
@@ -232,6 +309,9 @@ export class GameScene extends Phaser.Scene {
       const color = sprite.fillColor;
       emitBurst(this, worldX, worldY, color, groupSize);
 
+      // Kill any lingering tweens on this sprite (e.g. the "scale back to 1.0"
+      // kicked off by unprime above) so the shatter tween owns it cleanly.
+      this.tweens.killTweensOf(sprite);
       this.tweens.add({
         targets: sprite,
         scale: 1.6,
@@ -293,6 +373,7 @@ export class GameScene extends Phaser.Scene {
 
   private onNewGame() {
     this.busy = true;
+    this.unprime();
     // Fade out existing sprites quickly, then rebuild
     const victims = Array.from(this.brickSprites.values());
     if (victims.length === 0) {
@@ -315,4 +396,3 @@ export class GameScene extends Phaser.Scene {
     });
   }
 }
-

@@ -16,4 +16,9 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [BootScene, MenuScene, GameScene, GameOverScene]
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+// Dev hook: expose the game instance so scripted tests / preview harnesses
+// can drive scene transitions directly (Phaser's synthesized-event handling
+// is unreliable in headless browsers). Harmless in prod.
+(window as unknown as { __game: Phaser.Game }).__game = game;
