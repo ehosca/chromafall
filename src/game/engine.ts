@@ -88,7 +88,7 @@ export class GameController {
   private history: Game[] = [];
   private currentIdx = 0;
 
-  constructor(rows = 15, cols = 15) {
+  constructor(rows = 14, cols = 9) {
     this.newGame(rows, cols);
   }
 
@@ -108,7 +108,7 @@ export class GameController {
     return this.currentIdx < this.history.length - 1;
   }
 
-  newGame(rows = 15, cols = 15): void {
+  newGame(rows = 14, cols = 9): void {
     this.history = [];
     const game = new Game();
     game.totalColumns = cols;

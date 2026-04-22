@@ -6,8 +6,8 @@ import { saveHighScore } from '../storage/highScores';
 import { sfx } from '../fx/sfx';
 import { emitBurst, shakeScreen, showComboText } from '../fx/effects';
 
-const ROWS = 15;
-const COLS = 15;
+const ROWS = 14;
+const COLS = 9;
 const HUD_HEIGHT = 70;
 const PADDING = 16;
 
