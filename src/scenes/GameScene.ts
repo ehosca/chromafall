@@ -29,6 +29,8 @@ export class GameScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private newGameBtn!: Phaser.GameObjects.Text;
   private muteBtn!: Phaser.GameObjects.Text;
+  private undoBtn!: Phaser.GameObjects.Text;
+  private redoBtn!: Phaser.GameObjects.Text;
   private tileSize = 32;
   private boardOriginX = 0;
   private boardOriginY = 0;
@@ -90,6 +92,120 @@ export class GameScene extends Phaser.Scene {
       sfx.setMuted(!sfx.isMuted());
       this.muteBtn.setText(sfx.isMuted() ? 'Sound: off' : 'Sound: on');
     });
+
+    // Undo / Redo sit on the top row alongside "New", right-aligned in the
+    // order [Undo] [Redo] [New]. They share the 18px primary-control size so
+    // they read at the same level as New. Color encodes enabled state:
+    // PALETTE.accent when actionable, PALETTE.textDim when not. Hover only
+    // swaps to text color when enabled, so a disabled button can't pretend
+    // it's interactive.
+    //
+    // Positions (right-aligned, origin 1,0):
+    //   New  ends at  w - PADDING
+    //   Redo ends at  w - PADDING - 60   (≈ "New" width 44 + 16 gap)
+    //   Undo ends at  w - PADDING - 120
+    this.undoBtn = this.add.text(this.scale.width - PADDING - 120, PADDING, 'Undo', {
+      fontSize: '18px',
+      color: PALETTE.textDim,
+      fontFamily: 'monospace'
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    this.undoBtn.on('pointerdown', () => {
+      if (this.busy) return;
+      if (!this.controller.canUndo) return;
+      sfx.click();
+      this.controller.undo();
+      this.syncBoardToCurrent();
+    });
+    this.undoBtn.on('pointerover', () => {
+      if (this.controller.canUndo) this.undoBtn.setColor(PALETTE.text);
+    });
+    this.undoBtn.on('pointerout', () => {
+      this.undoBtn.setColor(this.controller.canUndo ? PALETTE.accent : PALETTE.textDim);
+    });
+
+    this.redoBtn = this.add.text(this.scale.width - PADDING - 60, PADDING, 'Redo', {
+      fontSize: '18px',
+      color: PALETTE.textDim,
+      fontFamily: 'monospace'
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    this.redoBtn.on('pointerdown', () => {
+      if (this.busy) return;
+      if (!this.controller.canRedo) return;
+      sfx.click();
+      this.controller.redo();
+      this.syncBoardToCurrent();
+    });
+    this.redoBtn.on('pointerover', () => {
+      if (this.controller.canRedo) this.redoBtn.setColor(PALETTE.text);
+    });
+    this.redoBtn.on('pointerout', () => {
+      this.redoBtn.setColor(this.controller.canRedo ? PALETTE.accent : PALETTE.textDim);
+    });
+  }
+
+  private refreshUndoRedo() {
+    if (!this.undoBtn || !this.redoBtn) return;
+    this.undoBtn.setColor(this.controller.canUndo ? PALETTE.accent : PALETTE.textDim);
+    this.redoBtn.setColor(this.controller.canRedo ? PALETTE.accent : PALETTE.textDim);
+  }
+
+  // Reconcile the sprite map with controller.current after undo/redo.
+  // Brick.clone preserves ids, so a brick that comes back via undo has the
+  // SAME id it had before — we just need to recreate its sprite. A brick
+  // that's redone-away is destroyed.
+  //   - id in current AND has sprite     → tween to new (col,row) slot
+  //   - id in current AND no sprite      → recreate sprite, fade in
+  //   - id in sprite map AND not current → fade + destroy
+  // This is intentionally simpler than the full shatter-and-fall sequence
+  // commitMove uses — undo/redo is a "scrub through history" gesture, not
+  // a fresh move, so a quick reposition reads better than a re-shatter.
+  private syncBoardToCurrent() {
+    this.unprime();
+    const game = this.controller.current;
+    const liveIds = new Set<number>();
+    for (const col of game.columns) {
+      for (const b of col.bricks) {
+        liveIds.add(b.id);
+        const tx = this.tileX(b.column);
+        const ty = this.tileY(b.row);
+        let sprite = this.brickSprites.get(b.id);
+        if (!sprite) {
+          // Came back from undo — recreate at slot, fade in.
+          sprite = this.createBrickSprite(b);
+          sprite.setAlpha(0);
+          this.tweens.add({
+            targets: sprite,
+            alpha: 1,
+            duration: FALL_DURATION,
+            ease: 'Cubic.Out'
+          });
+        } else if (sprite.x !== tx || sprite.y !== ty) {
+          this.tweens.killTweensOf(sprite);
+          this.tweens.add({
+            targets: sprite,
+            x: tx,
+            y: ty,
+            duration: FALL_DURATION,
+            ease: 'Cubic.Out'
+          });
+        }
+      }
+    }
+    // Anything in our sprite map that no longer exists in current got
+    // redo'd-away — fade and destroy.
+    for (const [id, sprite] of this.brickSprites) {
+      if (liveIds.has(id)) continue;
+      this.tweens.killTweensOf(sprite);
+      this.tweens.add({
+        targets: sprite,
+        alpha: 0,
+        duration: FALL_DURATION / 2,
+        onComplete: () => sprite.destroy()
+      });
+      this.brickSprites.delete(id);
+    }
+    this.scoreText.setText(`Score: ${this.controller.totalScore}`);
+    this.refreshUndoRedo();
   }
 
   private computeLayout() {
@@ -109,6 +225,8 @@ export class GameScene extends Phaser.Scene {
     this.boardContainer.setPosition(this.boardOriginX, this.boardOriginY);
     if (this.newGameBtn) this.newGameBtn.setPosition(this.scale.width - PADDING, PADDING);
     if (this.muteBtn) this.muteBtn.setPosition(this.scale.width - PADDING, PADDING + 28);
+    if (this.undoBtn) this.undoBtn.setPosition(this.scale.width - PADDING - 120, PADDING);
+    if (this.redoBtn) this.redoBtn.setPosition(this.scale.width - PADDING - 60, PADDING);
 
     const game = this.controller.current;
     for (const col of game.columns) {
@@ -186,6 +304,7 @@ export class GameScene extends Phaser.Scene {
       });
     }
     this.scoreText.setText(`Score: ${this.controller.totalScore}`);
+    this.refreshUndoRedo();
   }
 
   private createBrickSprite(brick: Brick): Phaser.GameObjects.Rectangle {
@@ -459,8 +578,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Update score immediately
+    // Update score + undo/redo state immediately. A fresh move clears the
+    // redo stack, so canRedo is now false; canUndo just became true.
     this.scoreText.setText(`Score: ${this.controller.totalScore}`);
+    this.refreshUndoRedo();
 
     // Re-enable input + check game over after animations settle
     this.time.delayedCall(Math.max(SHATTER_DURATION, FALL_DURATION) + 50, () => {
