@@ -3,6 +3,7 @@ import { BootScene } from './scenes/BootScene';
 import { MenuScene } from './scenes/MenuScene';
 import { GameScene } from './scenes/GameScene';
 import { GameOverScene } from './scenes/GameOverScene';
+import { SettingsScene } from './scenes/SettingsScene';
 import { BG_HEX } from './theme/palette';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -13,7 +14,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
-  scene: [BootScene, MenuScene, GameScene, GameOverScene]
+  scene: [BootScene, MenuScene, GameScene, GameOverScene, SettingsScene]
 };
 
 const game = new Phaser.Game(config);

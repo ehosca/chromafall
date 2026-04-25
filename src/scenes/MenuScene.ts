@@ -65,6 +65,21 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: 'monospace'
     }).setOrigin(0.5);
 
+    // Settings link below the PLAY button. Pauses MenuScene under the overlay
+    // so the menu state survives — important for the pulse-tween on PLAY.
+    const settings = this.add.text(cx, cy + 110, 'Settings', {
+      fontSize: '14px',
+      color: PALETTE.textDim,
+      fontFamily: 'monospace'
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    settings.on('pointerdown', () => {
+      sfx.click();
+      this.scene.pause();
+      this.scene.launch('SettingsScene', { returnTo: this.scene.key });
+    });
+    settings.on('pointerover', () => settings.setColor(PALETTE.text));
+    settings.on('pointerout', () => settings.setColor(PALETTE.textDim));
+
     this.scale.on('resize', () => this.scene.restart());
   }
 }

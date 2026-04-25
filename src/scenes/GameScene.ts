@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { GameController } from '../game/engine';
 import type { Brick } from '../game/brick';
-import { PALETTE, BRICK_FILL, BRICK_GLOW } from '../theme/palette';
+import { PALETTE } from '../theme/palette';
+import { getActiveTheme, applyTheme } from '../theme/themes';
 import { saveHighScore } from '../storage/highScores';
 import { sfx } from '../fx/sfx';
 import { emitBurst, shakeScreen, showComboText } from '../fx/effects';
@@ -28,7 +29,7 @@ export class GameScene extends Phaser.Scene {
   private brickSprites: Map<number, Phaser.GameObjects.Rectangle> = new Map();
   private scoreText!: Phaser.GameObjects.Text;
   private newGameBtn!: Phaser.GameObjects.Text;
-  private muteBtn!: Phaser.GameObjects.Text;
+  private settingsBtn!: Phaser.GameObjects.Text;
   private undoBtn!: Phaser.GameObjects.Text;
   private redoBtn!: Phaser.GameObjects.Text;
   private tileSize = 32;
@@ -51,6 +52,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   create() {
+    // Apply the active theme's background up front so the rain-drop entry
+    // happens against the correct backdrop. Tile colors are applied per-sprite
+    // in createBrickSprite (which reads getActiveTheme), so the very first
+    // frame already matches the saved theme — no flash of "default" colors.
+    this.cameras.main.setBackgroundColor(getActiveTheme().bg);
     this.controller = new GameController(ROWS, COLS);
     this.boardContainer = this.add.container(0, 0);
     this.createHud();
@@ -63,10 +69,25 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // Called by SettingsScene when the user picks a theme — repaint live sprites
+  // in place so the user can see the swap without losing game state.
+  applyCurrentTheme(): void {
+    applyTheme({
+      scene: this,
+      sprites: this.brickSprites,
+      brickColorOf: (id) => this.findBrick(id)?.color,
+      tileSize: this.tileSize,
+      scoreText: this.scoreText,
+      rerunHud: () => this.refreshUndoRedo()
+    });
+  }
+
   private createHud() {
+    // Use active theme's HUD color so the initial render matches the saved
+    // theme. applyTheme keeps it in sync on subsequent theme switches.
     this.scoreText = this.add.text(PADDING, PADDING, 'Score: 0', {
       fontSize: '22px',
-      color: PALETTE.text,
+      color: getActiveTheme().hudScoreColor,
       fontFamily: 'monospace'
     });
 
@@ -83,15 +104,23 @@ export class GameScene extends Phaser.Scene {
     this.newGameBtn.on('pointerover', () => this.newGameBtn.setColor(PALETTE.text));
     this.newGameBtn.on('pointerout', () => this.newGameBtn.setColor(PALETTE.accent));
 
-    this.muteBtn = this.add.text(this.scale.width - PADDING, PADDING + 28, sfx.isMuted() ? 'Sound: off' : 'Sound: on', {
+    // Settings link replaces the inline Sound toggle. The Settings overlay
+    // owns both Theme and Sound — keeps the HUD lean and gives settings room
+    // to grow. Pauses GameScene under the overlay so animations don't keep
+    // spinning while the user fiddles with options.
+    this.settingsBtn = this.add.text(this.scale.width - PADDING, PADDING + 28, 'Settings', {
       fontSize: '12px',
       color: PALETTE.textDim,
       fontFamily: 'monospace'
     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-    this.muteBtn.on('pointerdown', () => {
-      sfx.setMuted(!sfx.isMuted());
-      this.muteBtn.setText(sfx.isMuted() ? 'Sound: off' : 'Sound: on');
+    this.settingsBtn.on('pointerdown', () => {
+      if (this.busy) return;
+      sfx.click();
+      this.scene.pause();
+      this.scene.launch('SettingsScene', { returnTo: this.scene.key });
     });
+    this.settingsBtn.on('pointerover', () => this.settingsBtn.setColor(PALETTE.text));
+    this.settingsBtn.on('pointerout', () => this.settingsBtn.setColor(PALETTE.textDim));
 
     // Undo / Redo sit on the top row alongside "New", right-aligned in the
     // order [Undo] [Redo] [New]. They share the 18px primary-control size so
@@ -224,7 +253,7 @@ export class GameScene extends Phaser.Scene {
     this.computeLayout();
     this.boardContainer.setPosition(this.boardOriginX, this.boardOriginY);
     if (this.newGameBtn) this.newGameBtn.setPosition(this.scale.width - PADDING, PADDING);
-    if (this.muteBtn) this.muteBtn.setPosition(this.scale.width - PADDING, PADDING + 28);
+    if (this.settingsBtn) this.settingsBtn.setPosition(this.scale.width - PADDING, PADDING + 28);
     if (this.undoBtn) this.undoBtn.setPosition(this.scale.width - PADDING - 120, PADDING);
     if (this.redoBtn) this.redoBtn.setPosition(this.scale.width - PADDING - 60, PADDING);
 
@@ -308,18 +337,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBrickSprite(brick: Brick): Phaser.GameObjects.Rectangle {
+    const t = getActiveTheme();
     const x = this.tileX(brick.column);
     const y = this.tileY(brick.row);
-    const size = this.tileSize - 2;
-    const rect = this.add.rectangle(x, y, size, size, BRICK_FILL[brick.color]);
+    const size = this.tileSize - t.tileGap;
+    const fill = t.fills[brick.color];
+    const glow = t.glows[brick.color];
+    const rect = this.add.rectangle(x, y, size, size, fill);
     // Bright stroke gives a neon-border look without the cost of a per-sprite shader.
-    // (A per-tile postFX.addGlow across 225 sprites tanks frame rate — don't do it.)
-    rect.setStrokeStyle(2, BRICK_GLOW[brick.color], 1);
+    // (A per-tile postFX.addGlow across all sprites tanks frame rate — don't do it.)
+    // Theme controls width/color: pastel sets 0 → no stroke; retro uses a fixed
+    // black inset; default/neon use the per-color glow value.
+    if (t.strokeWidth > 0) {
+      const sc = t.strokeFromGlow ? glow : t.strokeColor;
+      rect.setStrokeStyle(t.strokeWidth, sc, 1);
+    }
     rect.setInteractive({ useHandCursor: true });
     // Stash fill tiers on the sprite so prime/unprime can swap colors without
     // needing the brick reference (which can go stale after a commit re-indexes).
-    rect.setData('baseFill', BRICK_FILL[brick.color]);
-    rect.setData('glowFill', BRICK_GLOW[brick.color]);
+    rect.setData('baseFill', fill);
+    rect.setData('glowFill', glow);
 
     // Single input model for desktop AND touch: first click/tap primes the
     // group, second click/tap on any primed tile commits. No hover-priming —
