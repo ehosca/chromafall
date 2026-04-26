@@ -9,7 +9,12 @@
     <title>Chromafall</title>
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="apple-touch-icon" href="/icons/icon.svg" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- manifest.json (not .webmanifest) so IIS serves it as application/json
+         out of the box — required for Chrome's PWA install prompt. The host
+         (SmarterASP.NET) locks user web.config overrides so we can't add the
+         .webmanifest MIME mapping; .json is mapped at the parent level and
+         inherits down. -->
+    <link rel="manifest" href="/manifest.json" />
     <style>
       html, body {
         margin: 0;
