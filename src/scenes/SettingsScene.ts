@@ -16,7 +16,6 @@ import { breathingPulse } from '../fx/effects';
 export class SettingsScene extends Phaser.Scene {
   private returnTo = 'MenuScene';
   private themeRows: Phaser.GameObjects.Text[] = [];
-  private soundLabel!: Phaser.GameObjects.Text;
 
   constructor() {
     super('SettingsScene');
@@ -98,27 +97,98 @@ export class SettingsScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
     y += 40;
 
-    this.soundLabel = this.add.text(w / 2, y, '', {
-      fontSize: '20px',
-      color: PALETTE.text,
-      fontFamily: 'monospace'
-    }).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
+    // iOS-style sliding toggle:
+    //   pill background — accent pink when ON, neutral gray when OFF
+    //   white knob       — slides left↔right with a short ease, animating the change
+    // Whole thing is one Container with a rectangular hit area so the user can
+    // tap anywhere on the pill (not just the knob) to flip it.
+    const TOGGLE_W = 64;
+    const TOGGLE_H = 32;
+    const KNOB_R = 12;
+    const KNOB_PAD = 4;
+    const KNOB_X_ON = TOGGLE_W / 2 - KNOB_R - KNOB_PAD;
+    const KNOB_X_OFF = -TOGGLE_W / 2 + KNOB_R + KNOB_PAD;
+    const COLOR_ON = 0xff4d9e;  // accent pink
+    const COLOR_OFF = 0x4a4a5e; // muted slate
+    const COLOR_HOVER_ON = 0xff6db0;
+    const COLOR_HOVER_OFF = 0x5a5a6e;
 
-    const refreshSound = () => {
-      this.soundLabel.setText(sfx.isMuted() ? 'OFF' : 'ON');
-      this.soundLabel.setColor(sfx.isMuted() ? PALETTE.textDim : PALETTE.text);
+    const toggleY = y + TOGGLE_H / 2;
+    const toggle = this.add.container(w / 2, toggleY);
+    toggle.setSize(TOGGLE_W, TOGGLE_H);
+    toggle.setInteractive(
+      new Phaser.Geom.Rectangle(-TOGGLE_W / 2, -TOGGLE_H / 2, TOGGLE_W, TOGGLE_H),
+      Phaser.Geom.Rectangle.Contains
+    );
+    // Phaser's setInteractive doesn't accept InputConfiguration when given a
+    // custom hit area — set the hand cursor on the input plugin directly.
+    if (toggle.input) toggle.input.cursor = 'pointer';
+
+    const pill = this.add.graphics();
+    const knob = this.add.graphics();
+    knob.fillStyle(0xffffff, 1);
+    knob.fillCircle(0, 0, KNOB_R);
+
+    // Two text labels inside the pill, each visible only when its state is
+    // active. Positioned on the side OPPOSITE the knob's resting position
+    // (knob ON sits right, so "ON" sits left; knob OFF sits left, so "OFF"
+    // sits right). They cross-fade as the user toggles. Z-order: pill at
+    // bottom, labels in the middle, knob on top so it slides past the labels.
+    const onLabel = this.add.text(-14, 0, 'ON', {
+      fontSize: '11px',
+      color: '#ffffff',
+      fontFamily: 'monospace',
+      fontStyle: 'bold'
+    }).setOrigin(0.5);
+    const offLabel = this.add.text(14, 0, 'OFF', {
+      fontSize: '11px',
+      color: '#dddddd',
+      fontFamily: 'monospace',
+      fontStyle: 'bold'
+    }).setOrigin(0.5);
+
+    toggle.add([pill, onLabel, offLabel, knob]);
+
+    let hovered = false;
+    const drawPill = () => {
+      const on = !sfx.isMuted();
+      pill.clear();
+      const c = on
+        ? (hovered ? COLOR_HOVER_ON : COLOR_ON)
+        : (hovered ? COLOR_HOVER_OFF : COLOR_OFF);
+      pill.fillStyle(c, 1);
+      pill.fillRoundedRect(-TOGGLE_W / 2, -TOGGLE_H / 2, TOGGLE_W, TOGGLE_H, TOGGLE_H / 2);
     };
-    refreshSound();
+    const refreshState = (animate: boolean) => {
+      const on = !sfx.isMuted();
+      const knobTarget = on ? KNOB_X_ON : KNOB_X_OFF;
+      const onAlpha = on ? 1 : 0;
+      const offAlpha = on ? 0 : 1;
+      if (animate) {
+        this.tweens.killTweensOf([knob, onLabel, offLabel]);
+        this.tweens.add({ targets: knob, x: knobTarget, duration: 180, ease: 'Cubic.Out' });
+        this.tweens.add({ targets: onLabel, alpha: onAlpha, duration: 180 });
+        this.tweens.add({ targets: offLabel, alpha: offAlpha, duration: 180 });
+      } else {
+        knob.x = knobTarget;
+        onLabel.alpha = onAlpha;
+        offLabel.alpha = offAlpha;
+      }
+    };
 
-    this.soundLabel.on('pointerdown', () => {
+    drawPill();
+    refreshState(false);
+
+    toggle.on('pointerdown', () => {
       sfx.setMuted(!sfx.isMuted());
-      refreshSound();
-      // Play click AFTER the toggle so unmute is audibly confirmed,
-      // and a mute toggle plays no sound at all.
+      drawPill();
+      refreshState(true);
+      // Play click AFTER the toggle so unmute is audibly confirmed and
+      // mute itself produces no sound (correct behavior).
       sfx.click();
     });
-    this.soundLabel.on('pointerover', () => this.soundLabel.setColor(PALETTE.accent));
-    this.soundLabel.on('pointerout', () => refreshSound());
+    toggle.on('pointerover', () => { hovered = true; drawPill(); });
+    toggle.on('pointerout', () => { hovered = false; drawPill(); });
 
     // -------- Back button --------
     const back = this.add.text(w / 2, h - 80, 'BACK', {

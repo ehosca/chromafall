@@ -26,6 +26,13 @@ export interface ThemeDef {
   halo: boolean;
   haloAlpha: number;    // 0-1; ignored if halo=false
   haloOversize: number; // px added to tile dimensions for the halo rect
+  // Optional 3D-extruded "pixel block" decoration drawn ON TOP of each tile:
+  //   bright top + left edge (highlight, derived from fill by lightening)
+  //   dark   bottom + right edge (shadow, derived from fill by darkening)
+  // Used by Classic for the NES-Tetris-block look without resorting to
+  // a hard black inset border (which fragments primed clusters visually).
+  bevel: boolean;
+  bevelSize: number;    // px width of the highlight/shadow edges
   hudScoreColor: string;
 }
 
@@ -63,6 +70,8 @@ const VIVID_NEON: ThemeDef = {
   // stays "dark with neon highlights" rather than "everything glowing".
   haloAlpha: 0.30,
   haloOversize: 8,
+  bevel: false,
+  bevelSize: 0,
   hudScoreColor: '#f5f5ff'
 };
 
@@ -102,12 +111,18 @@ const SOFT_PASTEL: ThemeDef = {
   halo: false,
   haloAlpha: 0,
   haloOversize: 0,
+  bevel: false,
+  bevelSize: 0,
   hudScoreColor: '#f5ecd8'
 };
 
-const RETRO_PIXEL: ThemeDef = {
-  id: 'retro',
-  name: 'Retro Pixel',
+// Renamed from "Retro Pixel" — this NES-Tetris-block style with bevel
+// highlights became the everyday default look once we built the bevel
+// system. Keeping the variable named CLASSIC because that's its role now:
+// the established "this is what Chromafall looks like" theme.
+const CLASSIC: ThemeDef = {
+  id: 'classic',
+  name: 'Classic',
   bg: 0x000000,
   fills: {
     [BrickColor.Red]: 0xee2222,
@@ -121,28 +136,34 @@ const RETRO_PIXEL: ThemeDef = {
     [BrickColor.Green]: 0x55ee77,
     [BrickColor.Yellow]: 0xffee55
   },
-  strokeWidth: 3,
+  // No stroke — the pixel-art read comes from per-tile bevel highlights
+  // (top+left bright, bottom+right shadow) rather than a black inset border.
+  // The black inset fragmented primed clusters into 4 separate tiles instead
+  // of letting the selection feel like one unified bright shape.
+  strokeWidth: 0,
   strokeFromGlow: false,
-  strokeColor: 0x000000, // chunky black inset border for the pixel-art read
+  strokeColor: 0x000000,
   tileGap: 0,            // no gap — full-bleed tiles
   halo: false,
   haloAlpha: 0,
   haloOversize: 0,
+  bevel: true,
+  bevelSize: 3,
   hudScoreColor: '#ffffff'
 };
 
-export const THEMES: ThemeDef[] = [VIVID_NEON, SOFT_PASTEL, RETRO_PIXEL];
+export const THEMES: ThemeDef[] = [CLASSIC, VIVID_NEON, SOFT_PASTEL];
 
 const STORAGE_KEY = 'chromafall-theme';
 
 // Active id resolution priority on first read:
 //   1. ?theme=<id> URL param (and persists it to localStorage)
 //   2. localStorage value (if it names a currently-registered theme)
-//   3. VIVID_NEON (the showpiece — defaults newcomers into the polished look)
+//   3. CLASSIC (the established default — beveled NES-block look)
 //
-// Note: a stored theme id that no longer exists (e.g. a removed theme) falls
-// through to the default. That's how the deletion of "classic" is handled
-// for users with the old value persisted.
+// Note: a stored theme id that no longer exists (e.g. a removed theme, or
+// the prior 'retro' id which was renamed to 'classic') falls through to
+// the default. That gracefully migrates users with stale values.
 function readInitialThemeId(): string {
   try {
     const url = new URLSearchParams(window.location.search);
@@ -156,13 +177,13 @@ function readInitialThemeId(): string {
   } catch {
     /* localStorage unavailable (private mode) — fall through */
   }
-  return VIVID_NEON.id;
+  return CLASSIC.id;
 }
 
 let activeId = readInitialThemeId();
 
 export function getActiveTheme(): ThemeDef {
-  return THEMES.find(t => t.id === activeId) ?? VIVID_NEON;
+  return THEMES.find(t => t.id === activeId) ?? CLASSIC;
 }
 
 export function setActiveTheme(id: string): ThemeDef {

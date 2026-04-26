@@ -23,6 +23,27 @@ const BORDER_PULSE_MIN_ALPHA = 0.35;
 const BORDER_LINE_WIDTH = 3;
 const BORDER_COLOR = 0xffffff;
 
+// Color helpers for theme decorations (bevel highlight/shadow). amount is
+// 0–1: lighten pushes channels toward white, darken pulls toward black.
+function lightenColor(color: number, amount: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const lr = Math.min(255, Math.round(r + (255 - r) * amount));
+  const lg = Math.min(255, Math.round(g + (255 - g) * amount));
+  const lb = Math.min(255, Math.round(b + (255 - b) * amount));
+  return (lr << 16) | (lg << 8) | lb;
+}
+function darkenColor(color: number, amount: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const dr = Math.max(0, Math.round(r * (1 - amount)));
+  const dg = Math.max(0, Math.round(g * (1 - amount)));
+  const db = Math.max(0, Math.round(b * (1 - amount)));
+  return (dr << 16) | (dg << 8) | db;
+}
+
 export class GameScene extends Phaser.Scene {
   private controller!: GameController;
   private boardContainer!: Phaser.GameObjects.Container;
@@ -34,6 +55,14 @@ export class GameScene extends Phaser.Scene {
   // present if the active theme has halo=true. Synced to sprite positions
   // every frame in update() so they follow tweens.
   private tileHalos: Map<number, Phaser.GameObjects.Image> = new Map();
+  // Bevels: optional per-tile NES-block decoration drawn ON TOP of each tile.
+  // Bright top + left edge (highlight from lightened fill), dark bottom +
+  // right edge (shadow from darkened fill). Used by Classic for the
+  // 3D-extruded look without a hard black inset border. Same lifecycle as
+  // tileHalos — synced to sprite positions in update(), torn down with
+  // sprites, redrawn on theme change AND on prime/unprime (since the
+  // highlight/shadow are derived from the live fill color).
+  private tileBevels: Map<number, Phaser.GameObjects.Graphics> = new Map();
   private scoreText!: Phaser.GameObjects.Text;
   private newGameBtn!: Phaser.GameObjects.Text;
   private settingsBtn!: Phaser.GameObjects.Text;
@@ -51,6 +80,11 @@ export class GameScene extends Phaser.Scene {
   // Alpha-pulses while primed. Lives inside boardContainer so its coords match
   // the tile sprites.
   private primedBorder?: Phaser.GameObjects.Graphics;
+  // Companion Graphics that fills the GAPS between adjacent primed tiles in
+  // the cluster's glow color, so a selection in a gap-using theme (Pastel,
+  // Neon) reads as one unified bright shape rather than discrete tiles
+  // separated by dark gap stripes. No-op for themes with tileGap=0.
+  private primedFill?: Phaser.GameObjects.Graphics;
   private borderPulseTween?: Phaser.Tweens.Tween;
   private busy = false;
 
@@ -88,23 +122,35 @@ export class GameScene extends Phaser.Scene {
       scoreText: this.scoreText,
       rerunHud: () => this.refreshUndoRedo()
     });
-    // Halo lifecycle isn't handled by applyTheme (which only knows about
-    // sprites). Rebuild halos here so a switch into Vivid Neon adds them and
-    // a switch out (e.g. to Pastel) cleans them up.
+    // Halo + bevel lifecycle isn't handled by applyTheme (which only knows
+    // about sprites). Rebuild both here so switching INTO a theme that wants
+    // halos/bevels adds them and switching OUT cleans them up.
     this.rebuildHalos();
+    this.rebuildBevels();
   }
 
-  // Phaser calls this every frame. Cheap O(n) sync of halo rects to their
-  // owning sprite's position — sprites move via tweens (rain-drop, gravity
-  // settle, undo/redo). Halos aren't part of those tweens, so we sync here.
-  // n is at most one halo per tile (~126), no-op when no halos exist.
+  // Phaser calls this every frame. Cheap O(n) sync of halo + bevel
+  // decorations to their owning sprite's position — sprites move via tweens
+  // (rain-drop, gravity settle, undo/redo). Decorations aren't part of those
+  // tweens, so we sync here. n is at most one decoration of each kind per
+  // tile (~126), no-op when no decorations exist.
   update(): void {
-    if (this.tileHalos.size === 0) return;
-    for (const [id, halo] of this.tileHalos) {
-      const sprite = this.brickSprites.get(id);
-      if (sprite) {
-        halo.x = sprite.x;
-        halo.y = sprite.y;
+    if (this.tileHalos.size > 0) {
+      for (const [id, halo] of this.tileHalos) {
+        const sprite = this.brickSprites.get(id);
+        if (sprite) {
+          halo.x = sprite.x;
+          halo.y = sprite.y;
+        }
+      }
+    }
+    if (this.tileBevels.size > 0) {
+      for (const [id, bevel] of this.tileBevels) {
+        const sprite = this.brickSprites.get(id);
+        if (sprite) {
+          bevel.x = sprite.x;
+          bevel.y = sprite.y;
+        }
       }
     }
   }
@@ -154,6 +200,61 @@ export class GameScene extends Phaser.Scene {
     this.tileHalos.clear();
     for (const [id, sprite] of this.brickSprites) {
       this.syncHalo(id, sprite);
+    }
+  }
+
+  // Create or update the bevel Graphics for one tile per the active theme.
+  // No-op (and removes any existing bevel) if the active theme has bevel=false.
+  //
+  // Bevel = bright top + left edges (highlight from lightened fill) and dark
+  // bottom + right edges (shadow from darkened fill). Highlight + shadow are
+  // derived from the SPRITE's current fill, so this naturally redraws with
+  // the right colors on prime/unprime (where fill swaps to the glow tier).
+  //
+  // Drawn as four fillRect calls on a single Graphics object — cheaper and
+  // simpler than four extra Rectangle GameObjects per tile.
+  private syncBevel(brickId: number, sprite: Phaser.GameObjects.Rectangle): void {
+    const t = getActiveTheme();
+    let bevel = this.tileBevels.get(brickId);
+    if (!t.bevel) {
+      if (bevel) { bevel.destroy(); this.tileBevels.delete(brickId); }
+      return;
+    }
+    const fill = sprite.fillColor;
+    const w = sprite.width;
+    const h = sprite.height;
+    const b = t.bevelSize;
+    const light = lightenColor(fill, 0.35);
+    const dark = darkenColor(fill, 0.45);
+    if (!bevel) {
+      bevel = this.add.graphics();
+      this.boardContainer.add(bevel); // top of stack — bevel sits ON TOP of tile
+      this.tileBevels.set(brickId, bevel);
+    }
+    bevel.clear();
+    // Sprite origin is center; draw with (0,0) at center too.
+    const x = -w / 2;
+    const y = -h / 2;
+    bevel.fillStyle(light, 1);
+    bevel.fillRect(x, y, w, b);              // top edge
+    bevel.fillRect(x, y, b, h);              // left edge
+    bevel.fillStyle(dark, 1);
+    bevel.fillRect(x, y + h - b, w, b);      // bottom edge
+    bevel.fillRect(x + w - b, y, b, h);      // right edge
+    bevel.x = sprite.x;
+    bevel.y = sprite.y;
+  }
+
+  private removeBevel(brickId: number): void {
+    const bevel = this.tileBevels.get(brickId);
+    if (bevel) { bevel.destroy(); this.tileBevels.delete(brickId); }
+  }
+
+  private rebuildBevels(): void {
+    for (const bevel of this.tileBevels.values()) bevel.destroy();
+    this.tileBevels.clear();
+    for (const [id, sprite] of this.brickSprites) {
+      this.syncBevel(id, sprite);
     }
   }
 
@@ -354,11 +455,13 @@ export class GameScene extends Phaser.Scene {
       });
       this.brickSprites.delete(id);
       this.removeHalo(id);
+      this.removeBevel(id);
     }
     // After undo, bricks may have come back via createBrickSprite — that adds
-    // halos for them automatically. Re-sync to ensure halos exist for all
-    // currently-live sprites under the active theme.
+    // halos and bevels for them automatically. Re-sync both to ensure they
+    // exist for all currently-live sprites under the active theme.
     this.rebuildHalos();
+    this.rebuildBevels();
     this.scoreText.setText(`Score: ${this.controller.totalScore}`);
     this.refreshUndoRedo();
   }
@@ -392,9 +495,12 @@ export class GameScene extends Phaser.Scene {
         s.setSize(this.tileSize - 2, this.tileSize - 2);
       }
     }
-    // Tile positions/sizes just moved — redraw the primed perimeter so it
-    // still hugs the selection.
-    if (this.primedGroupIds.size > 0) this.redrawPrimedBorder();
+    // Tile positions/sizes just moved — redraw the primed perimeter and the
+    // gap-fill connectors so they still hug the selection.
+    if (this.primedGroupIds.size > 0) {
+      this.redrawPrimedBorder();
+      this.redrawPrimedFill();
+    }
   }
 
   private tileX(col: number): number {
@@ -406,18 +512,20 @@ export class GameScene extends Phaser.Scene {
 
   private createBoard() {
     // Clear any prior sprites. `removeAll(true)` destroys the container's
-    // children, including the primedBorder Graphics AND all halo rects if
-    // they were in the list — so we explicitly null our references and
-    // clear the parallel maps.
+    // children, including the primedBorder Graphics AND all halo / bevel
+    // decorations if they were in the list — so we explicitly null our
+    // references and clear the parallel maps.
     this.boardContainer.removeAll(true);
     this.brickSprites.clear();
     this.tileHalos.clear();
+    this.tileBevels.clear();
     this.primedGroupIds.clear();
     if (this.borderPulseTween) {
       this.borderPulseTween.stop();
       this.borderPulseTween = undefined;
     }
     this.primedBorder = undefined;
+    this.primedFill = undefined;
 
     const game = this.controller.current;
 
@@ -474,8 +582,8 @@ export class GameScene extends Phaser.Scene {
     const rect = this.add.rectangle(x, y, size, size, fill);
     // Bright stroke gives a neon-border look without the cost of a per-sprite shader.
     // (A per-tile postFX.addGlow across all sprites tanks frame rate — don't do it.)
-    // Theme controls width/color: pastel sets 0 → no stroke; retro uses a fixed
-    // black inset; default/neon use the per-color glow value.
+    // Theme controls width/color: pastel/classic set 0 → no stroke; neon uses
+    // the per-color glow value as a thin bright stroke.
     if (t.strokeWidth > 0) {
       const sc = t.strokeFromGlow ? glow : t.strokeColor;
       rect.setStrokeStyle(t.strokeWidth, sc, 1);
@@ -497,9 +605,10 @@ export class GameScene extends Phaser.Scene {
 
     this.boardContainer.add(rect);
     this.brickSprites.set(brick.id, rect);
-    // Add halo last so it's based on the sprite that was just registered.
-    // syncHalo no-ops if the active theme doesn't want one.
+    // Add decorations last so they're based on the sprite that was just
+    // registered. Both no-op if the active theme doesn't want them.
     this.syncHalo(brick.id, rect);
+    this.syncBevel(brick.id, rect);
     return rect;
   }
 
@@ -557,10 +666,12 @@ export class GameScene extends Phaser.Scene {
     }
     this.primedGroupIds = newIds;
 
-    // Redraw the perimeter border for the new set and make sure the pulse is
-    // running. We only (re)draw when the set actually changes, so the tween
-    // ticks uninterrupted across successive hovers on the same group.
+    // Redraw the perimeter border + the gap-fill connectors for the new set
+    // and make sure the pulse is running. We only (re)draw when the set
+    // actually changes, so the tween ticks uninterrupted across successive
+    // hovers on the same group.
     this.redrawPrimedBorder();
+    this.redrawPrimedFill();
     this.startBorderPulse();
   }
 
@@ -570,6 +681,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.primedGroupIds.clear();
     this.stopBorderPulse();
+    if (this.primedFill) this.primedFill.clear();
   }
 
   // Swap one tile's fill between the muted base color and the bright glow
@@ -581,6 +693,16 @@ export class GameScene extends Phaser.Scene {
     if (!s) return;
     const fill = primed ? s.getData('glowFill') : s.getData('baseFill');
     s.setFillStyle(fill, 1);
+    // Bevels fragment a primed cluster into individual tiles — drop them on
+    // primed tiles so the selection reads as one unified bright shape. The
+    // pulsing white perimeter still traces the cluster's outer edge, so the
+    // selection is clearly delineated; we just don't want internal grid
+    // lines from the bevel L-shapes inside it. Restored on unprime.
+    if (primed) {
+      this.removeBevel(id);
+    } else {
+      this.syncBevel(id, s);
+    }
   }
 
   // Draw a single polyline tracing the outer edges of every primed tile.
@@ -645,6 +767,78 @@ export class GameScene extends Phaser.Scene {
         g.lineBetween(right, top, right, bottom);
       }
     }
+  }
+
+  // Fill the gap STRIPS between adjacent primed tiles plus the small CENTER
+  // square at every internal 2x2 corner where 4 primed tiles meet. The result
+  // is that a primed cluster reads as one continuous bright shape — no dark
+  // gap stripes interrupting it. Theme-aware: no-op when tileGap is 0
+  // (Classic — tiles already touch, nothing to fill).
+  //
+  // Geometry per tile (col, row):
+  //   - Right strip (col+1, row primed): innerHalf-out by gap wide, innerSize tall
+  //   - Up strip    (col, row+1 primed): innerSize wide, gap tall, sits above tile
+  //   - Center square (col+1,row + col,row+1 + col+1,row+1 all primed): gap × gap
+  // Only checks right/up to avoid drawing each gap twice (left/down are the
+  // mirror of some other tile's right/up).
+  private redrawPrimedFill() {
+    const t = getActiveTheme();
+    if (t.tileGap === 0) {
+      // No gaps to fill in this theme — clear any prior draw and bail.
+      if (this.primedFill) this.primedFill.clear();
+      return;
+    }
+    if (!this.primedFill) {
+      this.primedFill = this.add.graphics();
+      this.boardContainer.add(this.primedFill);
+    }
+    this.primedFill.clear();
+    if (this.primedGroupIds.size === 0) return;
+
+    const primed: Brick[] = [];
+    for (const id of this.primedGroupIds) {
+      const b = this.findBrick(id);
+      if (b) primed.push(b);
+    }
+    if (primed.length === 0) return;
+
+    // All primed tiles are the same color, so any sprite's glow value works.
+    const firstSprite = this.brickSprites.get(primed[0].id);
+    if (!firstSprite) return;
+    const color = firstSprite.getData('glowFill') as number;
+    this.primedFill.fillStyle(color, 1);
+
+    const key = (c: number, r: number) => `${c},${r}`;
+    const inGroup = new Set(primed.map(b => key(b.column, b.row)));
+    const innerHalf = (this.tileSize - t.tileGap) / 2;
+    const innerSize = this.tileSize - t.tileGap;
+    const gap = t.tileGap;
+
+    for (const b of primed) {
+      const cx = this.tileX(b.column);
+      const cy = this.tileY(b.row);
+
+      // Right neighbor primed → fill horizontal gap to the right
+      if (inGroup.has(key(b.column + 1, b.row))) {
+        this.primedFill.fillRect(cx + innerHalf, cy - innerHalf, gap, innerSize);
+      }
+      // Upper neighbor primed (row+1 is visually UP in our coord system) →
+      // fill vertical gap above
+      if (inGroup.has(key(b.column, b.row + 1))) {
+        this.primedFill.fillRect(cx - innerHalf, cy - innerHalf - gap, innerSize, gap);
+      }
+      // Diagonal: 2x2 of primed tiles at (col,row),(col+1,row),(col,row+1),
+      // (col+1,row+1) → fill the center gap×gap square at their shared corner.
+      if (
+        inGroup.has(key(b.column + 1, b.row)) &&
+        inGroup.has(key(b.column, b.row + 1)) &&
+        inGroup.has(key(b.column + 1, b.row + 1))
+      ) {
+        this.primedFill.fillRect(cx + innerHalf, cy - innerHalf - gap, gap, gap);
+      }
+    }
+    // Border must stay above the fill so the perimeter pulse remains visible.
+    if (this.primedBorder) this.boardContainer.bringToTop(this.primedBorder);
   }
 
   private startBorderPulse() {
@@ -724,8 +918,9 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => sprite.destroy()
       });
       this.brickSprites.delete(id);
-      // Halo isn't part of the shatter tween — fade it on the same timeline
-      // so it doesn't linger as a glowing ghost where the tile used to be.
+      // Halo + bevel aren't part of the shatter tween — fade each on the
+      // same timeline so they don't linger as ghosts where the tile used
+      // to be.
       const halo = this.tileHalos.get(id);
       if (halo) {
         this.tweens.killTweensOf(halo);
@@ -738,6 +933,19 @@ export class GameScene extends Phaser.Scene {
           onComplete: () => halo.destroy()
         });
         this.tileHalos.delete(id);
+      }
+      const bevel = this.tileBevels.get(id);
+      if (bevel) {
+        this.tweens.killTweensOf(bevel);
+        this.tweens.add({
+          targets: bevel,
+          scale: 1.6,
+          alpha: 0,
+          duration: SHATTER_DURATION,
+          ease: 'Cubic.Out',
+          onComplete: () => bevel.destroy()
+        });
+        this.tileBevels.delete(id);
       }
     }
 
