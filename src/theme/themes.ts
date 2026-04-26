@@ -18,36 +18,23 @@ export interface ThemeDef {
   strokeFromGlow: boolean;
   strokeColor: number;
   tileGap: number;     // px subtracted from tileSize for the rect (gap between tiles)
+  // Optional soft-glow rectangle drawn UNDER each tile in the per-color glow
+  // value, with additive blending so overlapping halos sum brightness (the
+  // "true neon" look). For halos to actually be visible BETWEEN tiles, the
+  // theme needs a tileGap big enough for the halo to peek out — at minimum
+  // tileGap >= haloOversize/2.
+  halo: boolean;
+  haloAlpha: number;    // 0-1; ignored if halo=false
+  haloOversize: number; // px added to tile dimensions for the halo rect
   hudScoreColor: string;
 }
-
-const CLASSIC: ThemeDef = {
-  id: 'classic',
-  name: 'Classic',
-  bg: 0x0a0a14,
-  fills: {
-    [BrickColor.Red]: 0xa8384a,
-    [BrickColor.Blue]: 0x3b5ca8,
-    [BrickColor.Green]: 0x3a8a4a,
-    [BrickColor.Yellow]: 0xa88828
-  },
-  glows: {
-    [BrickColor.Red]: 0xee7a8a,
-    [BrickColor.Blue]: 0x7a9eea,
-    [BrickColor.Green]: 0x6ccc88,
-    [BrickColor.Yellow]: 0xeec858
-  },
-  strokeWidth: 2,
-  strokeFromGlow: true,
-  strokeColor: 0xffffff,
-  tileGap: 2,
-  hudScoreColor: '#e8e8ff'
-};
 
 const VIVID_NEON: ThemeDef = {
   id: 'neon',
   name: 'Vivid Neon',
-  bg: 0x05050f,
+  // Pitch-black bg makes the additive halos read as actual light against
+  // surrounding darkness — that's what sells "neon".
+  bg: 0x000000,
   fills: {
     [BrickColor.Red]: 0xff3366,
     [BrickColor.Blue]: 0x4477ff,
@@ -60,10 +47,22 @@ const VIVID_NEON: ThemeDef = {
     [BrickColor.Green]: 0x77ee99,
     [BrickColor.Yellow]: 0xffe077
   },
-  strokeWidth: 3,
+  strokeWidth: 2,
   strokeFromGlow: true,
   strokeColor: 0xffffff,
-  tileGap: 2,
+  // Big tile gap so the halo can spread BETWEEN tiles — without this all the
+  // halos overlap so heavily that only the outer perimeter of the whole board
+  // shows any glow (which was the bug in the original Vivid Neon).
+  tileGap: 8,
+  halo: true,
+  // Radial-falloff sprite halo with ADD blend. The texture's corner alpha is
+  // 0 so 4-way intersections never produce white dots — that means we can
+  // tune alpha purely on aesthetic feel rather than dodging math artifacts.
+  // 0.30 is the "just-there" sweet spot — per-tile glow is visible at the
+  // edges, same-color clusters pool together, but the board's overall mood
+  // stays "dark with neon highlights" rather than "everything glowing".
+  haloAlpha: 0.30,
+  haloOversize: 8,
   hudScoreColor: '#f5f5ff'
 };
 
@@ -100,6 +99,9 @@ const SOFT_PASTEL: ThemeDef = {
   strokeFromGlow: true,
   strokeColor: 0xffffff,
   tileGap: 6,          // breathing room between tiles
+  halo: false,
+  haloAlpha: 0,
+  haloOversize: 0,
   hudScoreColor: '#f5ecd8'
 };
 
@@ -123,17 +125,24 @@ const RETRO_PIXEL: ThemeDef = {
   strokeFromGlow: false,
   strokeColor: 0x000000, // chunky black inset border for the pixel-art read
   tileGap: 0,            // no gap — full-bleed tiles
+  halo: false,
+  haloAlpha: 0,
+  haloOversize: 0,
   hudScoreColor: '#ffffff'
 };
 
-export const THEMES: ThemeDef[] = [CLASSIC, VIVID_NEON, SOFT_PASTEL, RETRO_PIXEL];
+export const THEMES: ThemeDef[] = [VIVID_NEON, SOFT_PASTEL, RETRO_PIXEL];
 
 const STORAGE_KEY = 'chromafall-theme';
 
 // Active id resolution priority on first read:
 //   1. ?theme=<id> URL param (and persists it to localStorage)
-//   2. localStorage value
-//   3. CLASSIC (the original look)
+//   2. localStorage value (if it names a currently-registered theme)
+//   3. VIVID_NEON (the showpiece — defaults newcomers into the polished look)
+//
+// Note: a stored theme id that no longer exists (e.g. a removed theme) falls
+// through to the default. That's how the deletion of "classic" is handled
+// for users with the old value persisted.
 function readInitialThemeId(): string {
   try {
     const url = new URLSearchParams(window.location.search);
@@ -147,13 +156,13 @@ function readInitialThemeId(): string {
   } catch {
     /* localStorage unavailable (private mode) — fall through */
   }
-  return CLASSIC.id;
+  return VIVID_NEON.id;
 }
 
 let activeId = readInitialThemeId();
 
 export function getActiveTheme(): ThemeDef {
-  return THEMES.find(t => t.id === activeId) ?? CLASSIC;
+  return THEMES.find(t => t.id === activeId) ?? VIVID_NEON;
 }
 
 export function setActiveTheme(id: string): ThemeDef {

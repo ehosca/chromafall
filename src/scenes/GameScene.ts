@@ -27,6 +27,13 @@ export class GameScene extends Phaser.Scene {
   private controller!: GameController;
   private boardContainer!: Phaser.GameObjects.Container;
   private brickSprites: Map<number, Phaser.GameObjects.Rectangle> = new Map();
+  // Halos: optional per-tile soft-glow Image drawn UNDER each tile, using a
+  // radial-falloff texture (opaque center → transparent edges) tinted to the
+  // tile's glow color. Radial alpha means at 4-way intersection corners the
+  // halos contribute ~0 alpha and additive sums never reach white. Only
+  // present if the active theme has halo=true. Synced to sprite positions
+  // every frame in update() so they follow tweens.
+  private tileHalos: Map<number, Phaser.GameObjects.Image> = new Map();
   private scoreText!: Phaser.GameObjects.Text;
   private newGameBtn!: Phaser.GameObjects.Text;
   private settingsBtn!: Phaser.GameObjects.Text;
@@ -36,8 +43,8 @@ export class GameScene extends Phaser.Scene {
   private boardOriginX = 0;
   private boardOriginY = 0;
   // The "primed" group is the tiles a first tap selected; a second tap inside
-  // the group commits. Each primed tile swaps fill from BRICK_FILL (muted)
-  // to BRICK_GLOW (bright) — that's the stateful "selected" signal. The
+  // the group commits. Each primed tile swaps fill from theme.fills (muted)
+  // to theme.glows (bright) — that's the stateful "selected" signal. The
   // outer-perimeter Graphics below adds an animated border on top.
   private primedGroupIds: Set<number> = new Set();
   // Single Graphics object tracing the outer edges of the primed group.
@@ -57,6 +64,7 @@ export class GameScene extends Phaser.Scene {
     // in createBrickSprite (which reads getActiveTheme), so the very first
     // frame already matches the saved theme — no flash of "default" colors.
     this.cameras.main.setBackgroundColor(getActiveTheme().bg);
+    this.ensureHaloTexture();
     this.controller = new GameController(ROWS, COLS);
     this.boardContainer = this.add.container(0, 0);
     this.createHud();
@@ -80,6 +88,119 @@ export class GameScene extends Phaser.Scene {
       scoreText: this.scoreText,
       rerunHud: () => this.refreshUndoRedo()
     });
+    // Halo lifecycle isn't handled by applyTheme (which only knows about
+    // sprites). Rebuild halos here so a switch into Vivid Neon adds them and
+    // a switch out (e.g. to Pastel) cleans them up.
+    this.rebuildHalos();
+  }
+
+  // Phaser calls this every frame. Cheap O(n) sync of halo rects to their
+  // owning sprite's position — sprites move via tweens (rain-drop, gravity
+  // settle, undo/redo). Halos aren't part of those tweens, so we sync here.
+  // n is at most one halo per tile (~126), no-op when no halos exist.
+  update(): void {
+    if (this.tileHalos.size === 0) return;
+    for (const [id, halo] of this.tileHalos) {
+      const sprite = this.brickSprites.get(id);
+      if (sprite) {
+        halo.x = sprite.x;
+        halo.y = sprite.y;
+      }
+    }
+  }
+
+  // Create or update a halo Image under the given sprite per the active theme.
+  // No-op (and removes any existing halo) if the active theme has halo=false.
+  //
+  // The halo uses a shared radial-falloff texture (see ensureHaloTexture)
+  // tinted to the tile's glow color. ADD blending now works cleanly because
+  // the texture's alpha at corners is ~0 — the intersection of 4 adjacent
+  // halos contributes near-zero brightness there, so no white dots.
+  private syncHalo(brickId: number, sprite: Phaser.GameObjects.Rectangle): void {
+    const t = getActiveTheme();
+    let halo = this.tileHalos.get(brickId);
+    if (!t.halo) {
+      if (halo) { halo.destroy(); this.tileHalos.delete(brickId); }
+      return;
+    }
+    const size = this.tileSize + t.haloOversize;
+    // Use the glow-tier color so the halo matches what a primed tile fades to.
+    const color = sprite.getData('glowFill') as number;
+    if (!halo) {
+      halo = this.add.image(sprite.x, sprite.y, 'halo-glow');
+      // ADD blending: same-color clusters compound brightness (the "ganged
+      // glow" we want), and at corners between mixed-color tiles the radial
+      // texture's near-zero alpha keeps additive sums dim — no white dots.
+      halo.setBlendMode(Phaser.BlendModes.ADD);
+      // addAt(0) puts it at the BOTTOM of the container — beneath all tiles.
+      this.boardContainer.addAt(halo, 0);
+      this.tileHalos.set(brickId, halo);
+    }
+    halo.setDisplaySize(size, size);
+    halo.setTint(color);
+    halo.setAlpha(t.haloAlpha);
+  }
+
+  private removeHalo(brickId: number): void {
+    const halo = this.tileHalos.get(brickId);
+    if (halo) { halo.destroy(); this.tileHalos.delete(brickId); }
+  }
+
+  // Tear down all halos and recreate from scratch for the active theme.
+  // Used on theme switches and on createBoard() — cleanest way to handle
+  // both add (theme grew halos) and remove (theme dropped halos).
+  private rebuildHalos(): void {
+    for (const halo of this.tileHalos.values()) halo.destroy();
+    this.tileHalos.clear();
+    for (const [id, sprite] of this.brickSprites) {
+      this.syncHalo(id, sprite);
+    }
+  }
+
+  // Generate the soft-glow halo texture once per scene boot. Drawn as a
+  // radial gradient on a canvas-backed Phaser texture: opaque white center
+  // fading to fully transparent at the edge. The white center is what
+  // setTint mutates per-tile, and the soft edge is what gives us the
+  // "no white dots at intersection corners" behavior — the corners of a
+  // sprite using this texture have alpha ~0, so additive overlap there
+  // contributes ~0 brightness.
+  //
+  // Texture lives in the global Phaser TextureManager keyed by 'halo-glow'.
+  // Re-entry (e.g. scene restart) is no-op via textures.exists().
+  private ensureHaloTexture(): void {
+    const KEY = 'halo-glow';
+    if (this.textures.exists(KEY)) return;
+    const SIZE = 128;
+    const canvas = this.textures.createCanvas(KEY, SIZE, SIZE);
+    if (!canvas) return;
+    const ctx = canvas.getContext();
+    const cx = SIZE / 2;
+    const cy = SIZE / 2;
+    const radius = SIZE / 2;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    // Falloff curve tuned for "halo around a tile":
+    //
+    //   The TILE sits on top of the halo, covering the center ~76% of the
+    //   sprite's diameter. The visible portion is a ring just outside the
+    //   tile's edge — texture coords ~0.75 to ~0.95 of the gradient. We need
+    //   that ring to be bright; zero-alpha needs to be at the gradient END
+    //   so the sprite's CORNERS (outside the inscribed circle) stay alpha 0.
+    //   Corners-at-0 is the whole point — that's what kills the white dots
+    //   at 4-way intersections under additive blending.
+    //
+    //   Old gradient had alpha 0.25 at coord 0.7 — way too dim for the
+    //   visible glow ring. New curve keeps near-full alpha out to 0.55, then
+    //   smoothly falls so the ring is bright but the edges + corners are 0.
+    //
+    // White RGB so setTint multiplies cleanly to the target color.
+    grad.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,1.0)');
+    grad.addColorStop(0.75, 'rgba(255,255,255,0.85)');
+    grad.addColorStop(0.92, 'rgba(255,255,255,0.40)');
+    grad.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    canvas.refresh();
   }
 
   private createHud() {
@@ -232,7 +353,12 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => sprite.destroy()
       });
       this.brickSprites.delete(id);
+      this.removeHalo(id);
     }
+    // After undo, bricks may have come back via createBrickSprite — that adds
+    // halos for them automatically. Re-sync to ensure halos exist for all
+    // currently-live sprites under the active theme.
+    this.rebuildHalos();
     this.scoreText.setText(`Score: ${this.controller.totalScore}`);
     this.refreshUndoRedo();
   }
@@ -280,10 +406,12 @@ export class GameScene extends Phaser.Scene {
 
   private createBoard() {
     // Clear any prior sprites. `removeAll(true)` destroys the container's
-    // children, including the primedBorder Graphics if it was in the list —
-    // so we explicitly null our reference and stop the tween after.
+    // children, including the primedBorder Graphics AND all halo rects if
+    // they were in the list — so we explicitly null our references and
+    // clear the parallel maps.
     this.boardContainer.removeAll(true);
     this.brickSprites.clear();
+    this.tileHalos.clear();
     this.primedGroupIds.clear();
     if (this.borderPulseTween) {
       this.borderPulseTween.stop();
@@ -369,6 +497,9 @@ export class GameScene extends Phaser.Scene {
 
     this.boardContainer.add(rect);
     this.brickSprites.set(brick.id, rect);
+    // Add halo last so it's based on the sprite that was just registered.
+    // syncHalo no-ops if the active theme doesn't want one.
+    this.syncHalo(brick.id, rect);
     return rect;
   }
 
@@ -593,6 +724,21 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => sprite.destroy()
       });
       this.brickSprites.delete(id);
+      // Halo isn't part of the shatter tween — fade it on the same timeline
+      // so it doesn't linger as a glowing ghost where the tile used to be.
+      const halo = this.tileHalos.get(id);
+      if (halo) {
+        this.tweens.killTweensOf(halo);
+        this.tweens.add({
+          targets: halo,
+          scale: 1.6,
+          alpha: 0,
+          duration: SHATTER_DURATION,
+          ease: 'Cubic.Out',
+          onComplete: () => halo.destroy()
+        });
+        this.tileHalos.delete(id);
+      }
     }
 
     // Tween survivors to new positions
