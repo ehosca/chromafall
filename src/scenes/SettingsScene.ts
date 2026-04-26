@@ -212,6 +212,17 @@ export class SettingsScene extends Phaser.Scene {
 
     this.input.keyboard?.on('keydown-ESC', goBack);
 
+    // App version, dimmed at the very bottom. Sourced from the GitHub
+    // Release tag in CI (see workflow + vite.config define block) and
+    // from package.json with a "-dev" suffix in local dev — so a quick
+    // glance tells you whether you're looking at a shipped build or
+    // a dev rebuild.
+    this.add.text(w / 2, h - 16, __APP_VERSION__, {
+      fontSize: '11px',
+      color: PALETTE.textDim,
+      fontFamily: 'monospace'
+    }).setOrigin(0.5);
+
     // Reference the backdrop so the linter doesn't complain about unused locals
     // (it's important — its setInteractive is what blocks click pass-through).
     void backdrop;

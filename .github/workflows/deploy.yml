@@ -1,0 +1,77 @@
+name: Deploy to SmarterASP.NET
+
+# Triggers:
+#   release.published — fires when you publish a new GitHub Release (or when
+#                        a draft release transitions to published). The
+#                        checkout will pick up the commit the release was
+#                        cut from (the tag's SHA).
+#   workflow_dispatch — manual "Run workflow" button in the Actions tab.
+#                        Useful for redeploying without cutting a new release
+#                        (e.g. server got wiped, or you need to re-sync after
+#                        editing files directly via FTP).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Prevent two deploys from racing each other to the FTP server. If a deploy
+# is mid-flight when another release publishes, the second one waits.
+concurrency:
+  group: deploy-smarterasp
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show what we're deploying
+        run: |
+          echo "Trigger:        ${{ github.event_name }}"
+          echo "Release tag:    ${{ github.event.release.tag_name || 'manual' }}"
+          echo "Release name:   ${{ github.event.release.name || 'manual' }}"
+          echo "Commit:         ${{ github.sha }}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production bundle
+        env:
+          # Sourced from the GitHub Release tag (e.g. "v0.2.0"). On a manual
+          # workflow_dispatch run there's no release, so we synthesize a
+          # version from the short commit SHA so it's still distinguishable.
+          # Vite reads this and bakes it into the bundle as __APP_VERSION__,
+          # which the SettingsScene displays.
+          VITE_APP_VERSION: ${{ github.event.release.tag_name || format('{0}-manual', github.sha) }}
+        run: npm run build
+
+      - name: Deploy to SmarterASP.NET (clean slate)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./dist/
+          # FTP user is chrooted to the webroot, so "/" here = the webroot
+          # for this account on SmarterASP.NET.
+          server-dir: /
+          # Clean-slate mode: wipe server-dir contents BEFORE uploading the
+          # new bundle. This is what guarantees old hashed JS bundles from
+          # prior releases (e.g. assets/index-OLDHASH.js) are removed instead
+          # of accumulating forever. Cost: every release transfers the full
+          # ~340KB payload — fine for a static site this small.
+          dangerous-clean-slate: true
+          protocol: ftps
+          # SmarterASP.NET certs sometimes don't validate strictly under
+          # Node's TLS; "loose" accepts the cert but the connection is still
+          # encrypted. Use "strict" if you've confirmed your host's cert is
+          # in the standard trust store.
+          security: loose
