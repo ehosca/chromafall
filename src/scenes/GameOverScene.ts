@@ -9,7 +9,7 @@ export class GameOverScene extends Phaser.Scene {
     super('GameOverScene');
   }
 
-  create(data: { score: number }) {
+  create(data: { score: number; elapsedMs?: number }) {
     const cx = this.scale.width / 2;
     const cy = this.scale.height / 2;
     const hasWebGL = this.sys.renderer.type === Phaser.WEBGL;
@@ -35,9 +35,17 @@ export class GameOverScene extends Phaser.Scene {
       fontFamily: 'monospace'
     }).setOrigin(0.5);
 
+    if (data.elapsedMs != null) {
+      this.add.text(cx, cy - 60, `Time: ${this.formatTime(data.elapsedMs)}`, {
+        fontSize: '20px',
+        color: PALETTE.textDim,
+        fontFamily: 'monospace'
+      }).setOrigin(0.5);
+    }
+
     const scores = loadHighScores();
     if (scores.length > 0) {
-      this.add.text(cx, cy - 50, 'HIGH SCORES', {
+      this.add.text(cx, cy - 25, 'HIGH SCORES', {
         fontSize: '14px',
         color: PALETTE.textDim,
         fontFamily: 'monospace'
@@ -46,7 +54,7 @@ export class GameOverScene extends Phaser.Scene {
       scores.slice(0, 5).forEach((entry, i) => {
         const rank = `${i + 1}.`.padEnd(4, ' ');
         const isCurrent = entry.score === data.score && i === 0;
-        this.add.text(cx, cy - 20 + i * 24, `${rank} ${entry.score}`, {
+        this.add.text(cx, cy + 5 + i * 24, `${rank} ${entry.score}`, {
           fontSize: '16px',
           color: isCurrent ? PALETTE.accent : PALETTE.text,
           fontFamily: 'monospace',
@@ -71,5 +79,12 @@ export class GameOverScene extends Phaser.Scene {
     });
     play.on('pointerover', () => play.setColor(PALETTE.accent));
     play.on('pointerout', () => play.setColor(PALETTE.text));
+  }
+
+  private formatTime(ms: number): string {
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min}:${sec.toString().padStart(2, '0')}`;
   }
 }

@@ -87,6 +87,9 @@ export class GameScene extends Phaser.Scene {
   private primedFill?: Phaser.GameObjects.Graphics;
   private borderPulseTween?: Phaser.Tweens.Tween;
   private busy = false;
+  private timerText!: Phaser.GameObjects.Text;
+  private elapsedMs = 0;
+  private gameEnded = false;
 
   constructor() {
     super('GameScene');
@@ -134,7 +137,13 @@ export class GameScene extends Phaser.Scene {
   // (rain-drop, gravity settle, undo/redo). Decorations aren't part of those
   // tweens, so we sync here. n is at most one decoration of each kind per
   // tile (~126), no-op when no decorations exist.
-  update(): void {
+  update(_time: number, delta: number): void {
+    // Tick the game timer (automatically paused when scene is paused).
+    if (!this.gameEnded) {
+      this.elapsedMs += delta;
+      this.timerText.setText(this.formatTime(this.elapsedMs));
+    }
+
     if (this.tileHalos.size > 0) {
       for (const [id, halo] of this.tileHalos) {
         const sprite = this.brickSprites.get(id);
@@ -310,6 +319,12 @@ export class GameScene extends Phaser.Scene {
     this.scoreText = this.add.text(PADDING, PADDING, 'Score: 0', {
       fontSize: '22px',
       color: getActiveTheme().hudScoreColor,
+      fontFamily: 'monospace'
+    });
+
+    this.timerText = this.add.text(PADDING, PADDING + 28, '0:00', {
+      fontSize: '14px',
+      color: PALETTE.textDim,
       fontFamily: 'monospace'
     });
 
@@ -510,7 +525,19 @@ export class GameScene extends Phaser.Scene {
     return (ROWS - 1 - row) * this.tileSize + this.tileSize / 2;
   }
 
+  private formatTime(ms: number): string {
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min}:${sec.toString().padStart(2, '0')}`;
+  }
+
   private createBoard() {
+    // Reset game timer for the new board.
+    this.elapsedMs = 0;
+    this.gameEnded = false;
+    this.timerText?.setText('0:00');
+
     // Clear any prior sprites. `removeAll(true)` destroys the container's
     // children, including the primedBorder Graphics AND all halo / bevel
     // decorations if they were in the list — so we explicitly null our
@@ -978,10 +1005,11 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(Math.max(SHATTER_DURATION, FALL_DURATION) + 50, () => {
       this.busy = false;
       if (this.controller.current.isGameOver) {
+        this.gameEnded = true;
         const finalScore = this.controller.totalScore;
         saveHighScore(finalScore);
         sfx.gameOver();
-        this.scene.start('GameOverScene', { score: finalScore });
+        this.scene.start('GameOverScene', { score: finalScore, elapsedMs: this.elapsedMs });
       }
     });
   }
