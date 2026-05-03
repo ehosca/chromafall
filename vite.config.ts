@@ -9,6 +9,11 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 const version = process.env.VITE_APP_VERSION || `v${pkg.version}-dev`;
 
 export default defineConfig({
+  // Site is hosted at hosca.com/chromafall/ — base prefixes all asset
+  // URLs (script src, CSS hrefs, etc.) so they resolve correctly under
+  // that subpath instead of the server root. Local `npm run dev` honors
+  // this too, so the dev URL is http://localhost:5173/chromafall/.
+  base: '/chromafall/',
   // __APP_VERSION__ is replaced at build time with a literal string. See
   // src/types/global.d.ts for the ambient declaration that lets TS use it.
   define: {

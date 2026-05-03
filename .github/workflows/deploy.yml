@@ -60,14 +60,18 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./dist/
-          # FTP user is chrooted to the webroot, so "/" here = the webroot
-          # for this account on SmarterASP.NET.
-          server-dir: /
+          # FTP user is chrooted to the webroot, so "/chromafall/" here is
+          # hosca.com/chromafall/ — the subpath ChromaFall lives under now
+          # that the site hosts multiple games. The webroot itself is
+          # owned by the landing-page deploy (separate, not this workflow).
+          server-dir: /chromafall/
           # Clean-slate mode: wipe server-dir contents BEFORE uploading the
-          # new bundle. This is what guarantees old hashed JS bundles from
-          # prior releases (e.g. assets/index-OLDHASH.js) are removed instead
-          # of accumulating forever. Cost: every release transfers the full
-          # ~340KB payload — fine for a static site this small.
+          # new bundle. Scoped to /chromafall/ now, so it can't touch the
+          # root index.html or sibling games like /wordfind/. This is what
+          # guarantees old hashed JS bundles from prior releases (e.g.
+          # assets/index-OLDHASH.js) are removed instead of accumulating
+          # forever. Cost: every release transfers the full ~340KB payload
+          # — fine for a static site this small.
           dangerous-clean-slate: true
           protocol: ftps
           # SmarterASP.NET certs sometimes don't validate strictly under
