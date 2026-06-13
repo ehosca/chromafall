@@ -7,7 +7,38 @@ export class BootScene extends Phaser.Scene {
 
   create() {
     this.generateParticleTexture();
-    this.scene.start('MenuScene');
+    this.startWhenFontsReady();
+  }
+
+  // Block the boot until the web fonts have loaded, then route to the menu.
+  // Phaser renders text to a canvas, so a font that isn't loaded yet paints
+  // in the system fallback and never repaints — every scene must wait for the
+  // faces to be ready before drawing any text. A 1.5s safety timer guarantees
+  // we never hang the boot if the font fetch stalls or the API is missing.
+  private startWhenFontsReady() {
+    const proceed = () => this.scene.start('MenuScene');
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (!fonts?.load) {
+      proceed();
+      return;
+    }
+    let started = false;
+    const finish = () => {
+      if (started) return;
+      started = true;
+      proceed();
+    };
+    const wanted = [
+      "700 1em 'Orbitron'",
+      "900 1em 'Orbitron'",
+      "600 1em 'Rajdhani'",
+      "700 1em 'Rajdhani'"
+    ];
+    Promise.all(wanted.map((f) => fonts.load(f).catch(() => undefined)))
+      .then(() => fonts.ready)
+      .then(finish)
+      .catch(finish);
+    this.time.delayedCall(1500, finish);
   }
 
   private generateParticleTexture() {

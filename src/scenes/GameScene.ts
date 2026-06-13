@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { GameController } from '../game/engine';
 import type { Brick } from '../game/brick';
 import { PALETTE } from '../theme/palette';
+import { FONT_UI } from '../theme/fonts';
 import { getActiveTheme, applyTheme } from '../theme/themes';
 import { saveHighScore } from '../storage/highScores';
 import { sfx } from '../fx/sfx';
@@ -319,19 +320,19 @@ export class GameScene extends Phaser.Scene {
     this.scoreText = this.add.text(PADDING, PADDING, 'Score: 0', {
       fontSize: '22px',
       color: getActiveTheme().hudScoreColor,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     });
 
     this.timerText = this.add.text(PADDING, PADDING + 28, '0:00', {
       fontSize: '14px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     });
 
     this.newGameBtn = this.add.text(this.scale.width - PADDING, PADDING, 'New', {
       fontSize: '18px',
       color: PALETTE.accent,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
     this.newGameBtn.on('pointerdown', () => {
       if (this.busy) return;
@@ -348,7 +349,7 @@ export class GameScene extends Phaser.Scene {
     this.settingsBtn = this.add.text(this.scale.width - PADDING, PADDING + 28, 'Settings', {
       fontSize: '12px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
     this.settingsBtn.on('pointerdown', () => {
       if (this.busy) return;
@@ -373,7 +374,7 @@ export class GameScene extends Phaser.Scene {
     this.undoBtn = this.add.text(this.scale.width - PADDING - 120, PADDING, 'Undo', {
       fontSize: '18px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
     this.undoBtn.on('pointerdown', () => {
       if (this.busy) return;
@@ -392,7 +393,7 @@ export class GameScene extends Phaser.Scene {
     this.redoBtn = this.add.text(this.scale.width - PADDING - 60, PADDING, 'Redo', {
       fontSize: '18px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
     this.redoBtn.on('pointerdown', () => {
       if (this.busy) return;

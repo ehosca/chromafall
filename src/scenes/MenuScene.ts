@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { PALETTE } from '../theme/palette';
+import { FONT_DISPLAY, FONT_UI } from '../theme/fonts';
 import { sfx } from '../fx/sfx';
 import { breathingPulse } from '../fx/effects';
+import { drawSynthwaveBackground } from '../fx/background';
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -13,38 +15,48 @@ export class MenuScene extends Phaser.Scene {
     const cy = this.scale.height / 2;
     const hasWebGL = this.sys.renderer.type === Phaser.WEBGL;
 
+    drawSynthwaveBackground(this);
+
     const title = this.add.text(cx, cy - 120, 'CHROMAFALL', {
-      fontSize: '64px',
-      color: PALETTE.accent,
-      fontFamily: 'monospace',
+      fontSize: '60px',
+      color: PALETTE.text,
+      fontFamily: FONT_DISPLAY,
       fontStyle: 'bold'
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setLetterSpacing(6);
+    // Orbitron is wide; "CHROMAFALL" overflows narrow viewports at 60px. Scale
+    // down to fit the available width (leaving margin) so it never clips.
+    const titleMaxW = this.scale.width - 40;
+    if (title.width > titleMaxW) title.setScale(titleMaxW / title.width);
 
     if (hasWebGL && title.postFX) {
       try {
-        title.postFX.addGlow(0xff4d9e, 3, 0, false, 0.1, 10);
+        // Crisper neon-tube glow: tighter, higher-quality bloom in the brand
+        // magenta with a faint inner light, rather than the old soft smudge.
+        title.postFX.addGlow(0xff4d9e, 4, 1, false, 0.4, 14);
       } catch {
         // ignore
       }
     }
 
-    this.add.text(cx, cy - 60, 'neon cascade', {
-      fontSize: '20px',
+    this.add.text(cx, cy - 64, 'NEON CASCADE', {
+      fontSize: '18px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
-    }).setOrigin(0.5);
+      fontFamily: FONT_UI,
+      fontStyle: '600'
+    }).setOrigin(0.5).setLetterSpacing(8);
 
     const play = this.add.text(cx, cy + 40, 'PLAY', {
       fontSize: '32px',
       color: PALETTE.text,
-      fontFamily: 'monospace',
+      fontFamily: FONT_DISPLAY,
+      fontStyle: 'bold',
       backgroundColor: '#1a1a2e',
-      padding: { x: 32, y: 14 }
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      padding: { x: 36, y: 16 }
+    }).setOrigin(0.5).setLetterSpacing(4).setInteractive({ useHandCursor: true });
 
     if (hasWebGL && play.postFX) {
       try {
-        play.postFX.addGlow(0xff4d9e, 1.5, 0, false, 0.1, 8);
+        play.postFX.addGlow(0xff4d9e, 2, 0, false, 0.3, 10);
       } catch {
         // ignore
       }
@@ -60,18 +72,19 @@ export class MenuScene extends Phaser.Scene {
     play.on('pointerout', () => play.setColor(PALETTE.text));
 
     this.add.text(cx, this.scale.height - 30, 'tap color clusters — watch them fall', {
-      fontSize: '12px',
+      fontSize: '13px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
-    }).setOrigin(0.5);
+      fontFamily: FONT_UI
+    }).setOrigin(0.5).setLetterSpacing(1);
 
     // Settings link below the PLAY button. Pauses MenuScene under the overlay
     // so the menu state survives — important for the pulse-tween on PLAY.
-    const settings = this.add.text(cx, cy + 110, 'Settings', {
-      fontSize: '14px',
+    const settings = this.add.text(cx, cy + 112, 'SETTINGS', {
+      fontSize: '15px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      fontFamily: FONT_UI,
+      fontStyle: '600'
+    }).setOrigin(0.5).setLetterSpacing(3).setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => {
       sfx.click();
       this.scene.pause();

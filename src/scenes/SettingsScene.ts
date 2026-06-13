@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { PALETTE } from '../theme/palette';
+import { FONT_DISPLAY, FONT_UI } from '../theme/fonts';
 import { THEMES, getActiveTheme, setActiveTheme } from '../theme/themes';
 import { sfx } from '../fx/sfx';
 import { breathingPulse } from '../fx/effects';
@@ -42,16 +43,16 @@ export class SettingsScene extends Phaser.Scene {
     this.add.text(w / 2, 60, 'SETTINGS', {
       fontSize: '28px',
       color: PALETTE.text,
-      fontFamily: 'monospace',
+      fontFamily: FONT_DISPLAY,
       fontStyle: 'bold'
-    }).setOrigin(0.5, 0);
+    }).setOrigin(0.5, 0).setLetterSpacing(4);
 
     // -------- THEME section --------
     let y = 130;
     this.add.text(w / 2, y, 'THEME', {
       fontSize: '22px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace',
+      fontFamily: FONT_UI,
       fontStyle: 'bold'
     }).setOrigin(0.5, 0);
     y += 40;
@@ -60,7 +61,7 @@ export class SettingsScene extends Phaser.Scene {
       const row = this.add.text(w / 2, y, '', {
         fontSize: '20px',
         color: PALETTE.text,
-        fontFamily: 'monospace'
+        fontFamily: FONT_UI
       }).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
 
       row.on('pointerdown', () => {
@@ -92,7 +93,7 @@ export class SettingsScene extends Phaser.Scene {
     this.add.text(w / 2, y, 'SOUND', {
       fontSize: '22px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace',
+      fontFamily: FONT_UI,
       fontStyle: 'bold'
     }).setOrigin(0.5, 0);
     y += 40;
@@ -137,13 +138,13 @@ export class SettingsScene extends Phaser.Scene {
     const onLabel = this.add.text(-14, 0, 'ON', {
       fontSize: '11px',
       color: '#ffffff',
-      fontFamily: 'monospace',
+      fontFamily: FONT_UI,
       fontStyle: 'bold'
     }).setOrigin(0.5);
     const offLabel = this.add.text(14, 0, 'OFF', {
       fontSize: '11px',
       color: '#dddddd',
-      fontFamily: 'monospace',
+      fontFamily: FONT_UI,
       fontStyle: 'bold'
     }).setOrigin(0.5);
 
@@ -194,7 +195,7 @@ export class SettingsScene extends Phaser.Scene {
     const back = this.add.text(w / 2, h - 80, 'BACK', {
       fontSize: '20px',
       color: PALETTE.accent,
-      fontFamily: 'monospace',
+      fontFamily: FONT_UI,
       backgroundColor: '#1a1a2e',
       padding: { x: 24, y: 10 }
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
@@ -220,7 +221,7 @@ export class SettingsScene extends Phaser.Scene {
     this.add.text(w / 2, h - 16, __APP_VERSION__, {
       fontSize: '11px',
       color: PALETTE.textDim,
-      fontFamily: 'monospace'
+      fontFamily: FONT_UI
     }).setOrigin(0.5);
 
     // Reference the backdrop so the linter doesn't complain about unused locals

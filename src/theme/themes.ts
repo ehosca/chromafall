@@ -65,11 +65,14 @@ const VIVID_NEON: ThemeDef = {
   // Radial-falloff sprite halo with ADD blend. The texture's corner alpha is
   // 0 so 4-way intersections never produce white dots — that means we can
   // tune alpha purely on aesthetic feel rather than dodging math artifacts.
-  // 0.30 is the "just-there" sweet spot — per-tile glow is visible at the
-  // edges, same-color clusters pool together, but the board's overall mood
-  // stays "dark with neon highlights" rather than "everything glowing".
-  haloAlpha: 0.30,
-  haloOversize: 8,
+  // Vivid Neon is the default/hero theme (it's literally the game's "neon
+  // cascade" identity), so the glow should actually read as light on first
+  // launch. 0.30 was too timid — tiles looked like flat squares with a faint
+  // drop shadow. 0.5 makes per-tile glow obvious and lets same-color clusters
+  // pool into real bloom, while the radial texture's zero-alpha corners still
+  // prevent white dots at 4-way intersections.
+  haloAlpha: 0.5,
+  haloOversize: 12,
   bevel: false,
   bevelSize: 0,
   hudScoreColor: '#f5f5ff'
@@ -117,9 +120,9 @@ const SOFT_PASTEL: ThemeDef = {
 };
 
 // Renamed from "Retro Pixel" — this NES-Tetris-block style with bevel
-// highlights became the everyday default look once we built the bevel
-// system. Keeping the variable named CLASSIC because that's its role now:
-// the established "this is what Chromafall looks like" theme.
+// highlights. Was the default for a while; now an alt skin behind Vivid Neon
+// (which better matches the game's "neon cascade" identity). The CLASSIC name
+// stuck because it's the clean, no-glow "just the blocks" option.
 const CLASSIC: ThemeDef = {
   id: 'classic',
   name: 'Classic',
@@ -152,14 +155,16 @@ const CLASSIC: ThemeDef = {
   hudScoreColor: '#ffffff'
 };
 
-export const THEMES: ThemeDef[] = [CLASSIC, VIVID_NEON, SOFT_PASTEL];
+// Vivid Neon leads: it's the game's namesake "neon cascade" identity and the
+// look a first-time player should see. Classic and Pastel follow as alt skins.
+export const THEMES: ThemeDef[] = [VIVID_NEON, CLASSIC, SOFT_PASTEL];
 
 const STORAGE_KEY = 'chromafall-theme';
 
 // Active id resolution priority on first read:
 //   1. ?theme=<id> URL param (and persists it to localStorage)
 //   2. localStorage value (if it names a currently-registered theme)
-//   3. CLASSIC (the established default — beveled NES-block look)
+//   3. VIVID_NEON (the default — the game's "neon cascade" identity)
 //
 // Note: a stored theme id that no longer exists (e.g. a removed theme, or
 // the prior 'retro' id which was renamed to 'classic') falls through to
@@ -177,13 +182,13 @@ function readInitialThemeId(): string {
   } catch {
     /* localStorage unavailable (private mode) — fall through */
   }
-  return CLASSIC.id;
+  return VIVID_NEON.id;
 }
 
 let activeId = readInitialThemeId();
 
 export function getActiveTheme(): ThemeDef {
-  return THEMES.find(t => t.id === activeId) ?? CLASSIC;
+  return THEMES.find(t => t.id === activeId) ?? VIVID_NEON;
 }
 
 export function setActiveTheme(id: string): ThemeDef {

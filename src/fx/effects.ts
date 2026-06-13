@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FONT_DISPLAY } from '../theme/fonts';
 
 /**
  * Emit a colored particle burst at world position (x, y).
@@ -76,7 +77,7 @@ export function showComboText(
   const text = scene.add.text(x, y, msg, {
     fontSize,
     color,
-    fontFamily: 'monospace',
+    fontFamily: FONT_DISPLAY,
     fontStyle: 'bold',
     stroke: '#0a0a14',
     strokeThickness: 4,
