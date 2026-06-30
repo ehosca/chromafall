@@ -2,6 +2,8 @@
 
 A neon cascade puzzle — tap color clusters, watch them fall.
 
+**Play it live: https://hosca.com/chromafall/**
+
 Built with [Phaser 3](https://phaser.io/) + TypeScript + Vite, packaged as an installable PWA. Future targets: iOS and Android via Capacitor.
 
 ## Getting started
