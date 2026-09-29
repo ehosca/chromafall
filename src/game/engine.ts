@@ -13,48 +13,57 @@ export class Game {
     return all;
   }
 
+  // Any orthogonal same-color pair means a move is still available. Only the
+  // right and up neighbors need checking; the other two are covered when the
+  // scan reaches that neighbor.
   get isGameOver(): boolean {
-    return this.columns.every(col =>
-      col.bricks.every(b => this.getAdjacentBricks(b).length === 0)
-    );
-  }
-
-  getAdjacentBricks(brick: Brick): Brick[] {
-    const found: Brick[] = [];
-    this.findNeighbors(brick, found, this.bricks);
-    return found;
-  }
-
-  private findNeighbors(brick: Brick, found: Brick[], pool: Brick[]): void {
-    const neighbors = pool.filter(b =>
-      b.color === brick.color && (
-        (Math.abs(b.row - brick.row) === 1 && b.column === brick.column) ||
-        (Math.abs(brick.column - b.column) === 1 && brick.row === b.row)
-      )
-    );
-    for (const n of neighbors) {
-      if (!found.includes(n)) {
-        found.push(n);
-        this.findNeighbors(n, found, pool);
+    for (let c = 0; c < this.columns.length; c++) {
+      const col = this.columns[c].bricks;
+      for (let r = 0; r < col.length; r++) {
+        const color = col[r].color;
+        if (col[r + 1]?.color === color) return false;
+        if (this.columns[c + 1]?.bricks[r]?.color === color) return false;
       }
     }
+    return true;
+  }
+
+  // Flood fill over the grid. Relies on the invariant that a brick's
+  // column/row match its index in columns[] and bricks[] (set in newGame and
+  // re-established by removeBricks). Returns [] for a lone brick, otherwise
+  // the whole group including `brick`.
+  getAdjacentBricks(brick: Brick): Brick[] {
+    const start = this.columns[brick.column]?.bricks[brick.row];
+    if (!start || start.color !== brick.color) return [];
+
+    const found: Brick[] = [start];
+    const seen = new Set<Brick>(found);
+    for (let i = 0; i < found.length; i++) {
+      const b = found[i];
+      const neighbors = [
+        this.columns[b.column].bricks[b.row + 1],
+        this.columns[b.column].bricks[b.row - 1],
+        this.columns[b.column + 1]?.bricks[b.row],
+        this.columns[b.column - 1]?.bricks[b.row]
+      ];
+      for (const n of neighbors) {
+        if (n && n.color === start.color && !seen.has(n)) {
+          seen.add(n);
+          found.push(n);
+        }
+      }
+    }
+    return found.length > 1 ? found : [];
   }
 
   removeBricks(bricksToRemove: Brick[]): number {
     const points = bricksToRemove.length * bricksToRemove.length;
 
-    for (const b of bricksToRemove) {
-      for (let ci = this.columns.length - 1; ci >= 0; ci--) {
-        const col = this.columns[ci];
-        for (let bi = col.bricks.length - 1; bi >= 0; bi--) {
-          const brick = col.bricks[bi];
-          if (b.row === brick.row && b.column === brick.column && b.color === brick.color) {
-            col.bricks.splice(bi, 1);
-            if (col.bricks.length === 0) this.columns.splice(ci, 1);
-          }
-        }
-      }
+    const doomed = new Set(bricksToRemove.map(b => `${b.column},${b.row}`));
+    for (const col of this.columns) {
+      col.bricks = col.bricks.filter(b => !doomed.has(`${b.column},${b.row}`));
     }
+    this.columns = this.columns.filter(col => col.bricks.length > 0);
 
     this.columns.forEach((col, colIdx) => {
       col.bricks.forEach((b, rowIdx) => {
